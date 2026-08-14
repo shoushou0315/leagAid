@@ -1,0 +1,55 @@
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/aramgg?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:YOUR_DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+
+# MyBatis 配置
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+# AI 密钥（支持环境变量覆盖，真实 key 见 application.yml.local）
+chat:
+  api-key: ${CHAT_API_KEY:YOUR_CHAT_API_KEY}
+  base-url: ${CHAT_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+  model: ${CHAT_MODEL:qwen3.8-max}
+
+qwen:
+  api-key: ${QWEN_API_KEY:YOUR_QWEN_API_KEY}
+  base-url: ${QWEN_BASE_URL:https://dashscope.aliyuncs.com}
+  embedding-model: ${QWEN_EMBEDDING_MODEL:text-embedding-v4}
+  voice-model: ${QWEN_VOICE_MODEL:qwen3.5-omni-plus}
+  asr-model: ${QWEN_ASR_MODEL:qwen-audio-3.0-asr-flash-streaming}
+  asr-url: ${QWEN_ASR_URL:wss://dashscope.aliyuncs.com/api-ws/v1/inference}
+  vl-model: ${QWEN_VL_MODEL:qwen-vl-max}
+
+minimax:
+  api-key: ${MINIMAX_API_KEY:YOUR_MINIMAX_API_KEY}
+  model: ${MINIMAX_MODEL:embo-01}
+
+# 对话记忆存储目录
+app:
+  memory-dir: ${APP_MEMORY_DIR:data/chat-memories}
+  redis:
+    host: ${REDIS_HOST:127.0.0.1}
+    port: ${REDIS_PORT:6379}
+  game-state-key: ${GAME_STATE_KEY:leagaid:state}
+  screenshot-dir: ${SCREENSHOT_DIR:C:\WeGameApps\英雄联盟\Game\Screenshots}
+
+# 数据源（aramgg 静态 JSON 接口）
+aramgg:
+  base-url: https://aramgg.com
+  # 数据文件（静态JSON，比爬HTML更可靠）
+  augments-file: /data/aram-mayhem-augments.zh_cn.json
+  champions-file: /data/champions-stats.json
+  champion-details-dir: /data/champion-details
+  # 向量索引持久化文件（启动时加载，避免重复embedding）
+  vector-index-file: ${VECTOR_INDEX_FILE:data/vector-index}
+  vector-dimension: ${VECTOR_DIMENSION:1024}

@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.HeroMapper">
+
+    <!-- 按名称查英雄（称号/官方名/英文名） -->
+    <select id="findHero" resultType="map">
+        SELECT id, name, official_name, en_name, tier, win_rate, pick_rate, win_rank
+        FROM heroes
+        WHERE name = #{name} OR official_name = #{name} OR en_name = #{name}
+        LIMIT 1
+    </select>
+
+    <!-- 英雄胜率/Tier/排名 -->
+    <select id="getHeroStats" resultType="map">
+        SELECT id, name, official_name, en_name, tier,
+               ROUND(win_rate * 100, 1) AS win_rate_pct,
+               ROUND(pick_rate * 100, 1) AS pick_rate_pct,
+               win_rank, version
+        FROM heroes
+        WHERE id = #{id}
+    </select>
+
+    <!-- 该英雄海克斯排名 TOP N -->
+    <select id="getHeroAugments" resultType="map">
+        SELECT a.name AS augment_name, a.tier_name, r.tier AS rank_tier,
+               r.win_rank, ROUND(r.win_rate * 100, 1) AS win_rate_pct,
+               ROUND(r.pick_rate * 100, 1) AS pick_rate_pct
+        FROM hero_augment_rank r
+        JOIN augments a ON r.augment_id = a.id
+        WHERE r.hero_id = #{heroId}
+        ORDER BY r.win_rank ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 该英雄指定海克斯（名称模糊匹配）胜率/排名 -->
+    <select id="getHeroAugmentByName" resultType="map">
+        SELECT a.name AS augment_name, a.tier_name, r.win_rank,
+               ROUND(r.win_rate * 100, 1) AS win_rate_pct,
+               ROUND(r.pick_rate * 100, 1) AS pick_rate_pct
+        FROM hero_augment_rank r
+        JOIN augments a ON r.augment_id = a.id
+        WHERE r.hero_id = #{heroId} AND a.name LIKE CONCAT('%', #{keyword}, '%')
+        ORDER BY r.win_rank ASC
+        LIMIT 5
+    </select>
+
+    <!-- 该英雄出装方案 -->
+    <select id="getBuilds" resultType="map">
+        SELECT b.build_index, b.group_index, b.slot, i.name AS item_name,
+               b.win_rate, b.pick_rate
+        FROM hero_item_build b
+        JOIN items i ON b.item_id = i.id
+        WHERE b.hero_id = #{heroId}
+        ORDER BY b.build_index ASC, b.group_index ASC, b.slot ASC
+    </select>
+
+    <!-- 该英雄玩法档案 -->
+    <select id="getHeroProfile" resultType="map">
+        SELECT title, tags, passive, spells, ally_tips, enemy_tips
+        FROM hero_profiles
+        WHERE hero_id = #{heroId}
+    </select>
+
+    <!-- 英雄排行榜 TOP N -->
+    <select id="getTopHeroes" resultType="map">
+        SELECT id, name, official_name, tier,
+               ROUND(win_rate * 100, 1) AS win_rate_pct,
+               ROUND(pick_rate * 100, 1) AS pick_rate_pct,
+               win_rank
+        FROM heroes
+        ORDER BY win_rank ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 三连组合 TOP N -->
+    <select id="getCombos" resultType="map">
+        SELECT c.augment_ids, ROUND(c.win_rate * 100, 1) AS win_rate_pct,
+               ROUND(c.pick_rate * 100, 1) AS pick_rate_pct
+        FROM augment_combos c
+        WHERE c.hero_id = #{heroId}
+        ORDER BY c.win_rate DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 全量海克斯（向量索引构建） -->
+    <select id="findAllAugments" resultType="map">
+        SELECT id, name, tier_name, description
+        FROM augments
+    </select>
+
+    <!-- 全量装备（向量索引构建） -->
+    <select id="findAllItems" resultType="map">
+        SELECT id, name, description, plaintext
+        FROM items
+    </select>
+
+    <!-- 全量英雄档案（向量索引构建） -->
+    <select id="findAllHeroProfiles" resultType="map">
+        SELECT hero_id, title, tags, blurb, passive, spells, ally_tips, enemy_tips
+        FROM hero_profiles
+    </select>
+
+    <!-- 海克斯数量 -->
+    <select id="countAugments" resultType="long">
+        SELECT COUNT(*) FROM augments
+    </select>
+
+    <!-- 装备数量 -->
+    <select id="countItems" resultType="long">
+        SELECT COUNT(*) FROM items
+    </select>
+
+    <!-- 英雄档案数量 -->
+    <select id="countHeroProfiles" resultType="long">
+        SELECT COUNT(*) FROM hero_profiles
+    </select>
+
+    <!-- 按 id 批量查海克斯名（三连组合映射） -->
+    <select id="findAugmentNamesByIds" resultType="map">
+        SELECT id, name
+        FROM augments
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <!-- 全量英雄官方中文名（语音热词用：玩家说"提莫"而非"迅捷斥候"） -->
+    <select id="findAllHeroNames" resultType="string">
+        SELECT official_name FROM heroes WHERE official_name IS NOT NULL AND official_name != ''
+    </select>
+
+    <!-- 全量海克斯名（语音热词） -->
+    <select id="findAllAugmentNames" resultType="string">
+        SELECT name FROM augments
+    </select>
+
+    <!-- 全量装备名（语音热词） -->
+    <select id="findAllItemNames" resultType="string">
+        SELECT name FROM items WHERE name IS NOT NULL AND name != ''
+    </select>
+
+    <!-- 动态查询（参数化）。表名/列名用白名单 choose 映射，杜绝注入；条件用 if 动态拼 -->
+    <select id="dynamicQuery" resultType="map">
+        <choose>
+            <when test="table == 'heroes'">
+                SELECT id, name, official_name, en_name, tier,
+                       ROUND(win_rate * 100, 1) AS win_rate_pct,
+                       ROUND(pick_rate * 100, 1) AS pick_rate_pct,
+                       win_rank, version
+                FROM heroes
+                <where>
+                    <if test="heroId != null">
+                        AND id = #{heroId}
+                    </if>
+                    <if test="keyword != null and keyword != ''">
+                        AND (name LIKE CONCAT('%', #{keyword}, '%')
+                             OR official_name LIKE CONCAT('%', #{keyword}, '%')
+                             OR en_name LIKE CONCAT('%', #{keyword}, '%'))
+                    </if>
+                    <if test="tier != null and tier != ''">
+                        AND tier = #{tier}
+                    </if>
+                </where>
+                ORDER BY win_rank ASC
+                LIMIT #{limit}
+            </when>
+            <when test="table == 'augments'">
+                SELECT id, name, tier_name, rarity, description, tooltip
+                FROM augments
+                <where>
+                    <if test="keyword != null and keyword != ''">
+                        (name LIKE CONCAT('%', #{keyword}, '%')
+                         OR en_name LIKE CONCAT('%', #{keyword}, '%'))
+                    </if>
+                    <if test="tier != null and tier != ''">
+                        AND tier_name = #{tier}
+                    </if>
+                </where>
+                ORDER BY id
+                <choose><when test="order == 'desc'">DESC</when><otherwise>ASC</otherwise></choose>
+                LIMIT #{limit}
+            </when>
+            <when test="table == 'items'">
+                SELECT id, name, tags, plaintext, description, total_price
+                FROM items
+                <where>
+                    <if test="keyword != null and keyword != ''">
+                        (name LIKE CONCAT('%', #{keyword}, '%')
+                         OR en_name LIKE CONCAT('%', #{keyword}, '%'))
+                    </if>
+                </where>
+                ORDER BY id
+                <choose><when test="order == 'desc'">DESC</when><otherwise>ASC</otherwise></choose>
+                LIMIT #{limit}
+            </when>
+            <when test="table == 'hero_augment_rank'">
+                SELECT h.name AS hero_name, a.name AS augment_name, a.tier_name,
+                       r.win_rank, ROUND(r.win_rate * 100, 1) AS win_rate_pct,
+                       ROUND(r.pick_rate * 100, 1) AS pick_rate_pct
+                FROM hero_augment_rank r
+                JOIN heroes h ON r.hero_id = h.id
+                JOIN augments a ON r.augment_id = a.id
+                <where>
+                    <if test="heroId != null">AND r.hero_id = #{heroId}</if>
+                    <if test="keyword != null and keyword != ''">
+                        AND (h.name LIKE CONCAT('%', #{keyword}, '%')
+                             OR a.name LIKE CONCAT('%', #{keyword}, '%'))
+                    </if>
+                    <if test="tier != null and tier != ''">
+                        AND a.tier_name = #{tier}
+                    </if>
+                </where>
+                ORDER BY r.win_rank ASC
+                LIMIT #{limit}
+            </when>
+            <when test="table == 'hero_item_build'">
+                SELECT h.name AS hero_name, i.name AS item_name,
+                       b.item_id, b.build_index, b.group_index, b.slot,
+                       ROUND(b.win_rate * 100, 1) AS win_rate_pct,
+                       ROUND(b.pick_rate * 100, 1) AS pick_rate_pct
+                FROM hero_item_build b
+                JOIN heroes h ON b.hero_id = h.id
+                LEFT JOIN items i ON b.item_id = i.id
+                <where>
+                    <if test="heroId != null">AND b.hero_id = #{heroId}</if>
+                    <if test="keyword != null and keyword != ''">
+                        AND (h.name LIKE CONCAT('%', #{keyword}, '%')
+                             OR i.name LIKE CONCAT('%', #{keyword}, '%')
+                             OR CAST(b.item_id AS CHAR) = #{keyword})
+                    </if>
+                </where>
+                ORDER BY b.win_rate DESC
+                LIMIT #{limit}
+            </when>
+            <when test="table == 'augment_combos'">
+                SELECT h.name AS hero_name, c.augment_ids,
+                       ROUND(c.win_rate * 100, 1) AS win_rate_pct,
+                       c.win_rank
+                FROM augment_combos c
+                JOIN heroes h ON c.hero_id = h.id
+                <where>
+                    <if test="heroId != null">AND c.hero_id = #{heroId}</if>
+                    <if test="keyword != null and keyword != ''">
+                        AND h.name LIKE CONCAT('%', #{keyword}, '%')
+                    </if>
+                </where>
+                ORDER BY c.win_rate DESC
+                LIMIT #{limit}
+            </when>
+            <otherwise>
+                SELECT 1 AS result
+            </otherwise>
+        </choose>
+    </select>
+
+</mapper>

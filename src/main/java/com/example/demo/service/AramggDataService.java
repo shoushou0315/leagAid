@@ -1,0 +1,497 @@
+package com.example.demo.service;
+
+import com.example.demo.entity.Augment;
+import com.example.demo.entity.Hero;
+import com.example.demo.entity.HeroAugmentRank;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.jsoup.nodes.Element;
+import org.springframework.stereotype.Service;
+
+import java.io.File;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/**
+ * aramgg 数据采集与落库
+ *
+ * 数据源（静态JSON，免HTML解析）：
+ *   1. /data/aram-mayhem-augments.zh_cn.json   全量海克斯（描述/稀有度）
+ *   2. /data/champions-stats.json              英雄总榜（胜率/Tier/排名）
+ *   3. /data/champion-details/{id}.json        单英雄145条海克斯排名
+ */
+@Service
+public class AramggDataService {
+
+    private static final Logger log = LoggerFactory.getLogger(AramggDataService.class);
+
+    private final com.example.demo.mapper.DataWriteMapper dataWriteMapper;
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final HttpClient http = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
+
+    @org.springframework.beans.factory.annotation.Value("${aramgg.base-url}")
+    private String baseUrl;
+    @org.springframework.beans.factory.annotation.Value("${aramgg.augments-file}")
+    private String augmentsFile;
+    @org.springframework.beans.factory.annotation.Value("${aramgg.champions-file}")
+    private String championsFile;
+    @org.springframework.beans.factory.annotation.Value("${aramgg.champion-details-dir}")
+    private String championDetailsDir;
+
+    private final AtomicBoolean running = new AtomicBoolean(false);
+    private volatile Runnable onSyncComplete;
+
+    /** 注册同步完成回调（如重建向量索引） */
+    public void setOnSyncComplete(Runnable callback) {
+        this.onSyncComplete = callback;
+    }
+
+    public AramggDataService(com.example.demo.mapper.DataWriteMapper dataWriteMapper) {
+        this.dataWriteMapper = dataWriteMapper;
+    }
+
+    /** 全量同步入口（异步线程执行，防阻塞） */
+    public void syncAsync() {
+        if (running.compareAndSet(false, true)) {
+            new Thread(this::sync, "aramgg-sync").start();
+        }
+    }
+
+    /** 全量同步：海克斯 → 英雄榜 → 装备 → 各英雄海克斯排名+装备build → 英雄档案 */
+    public void sync() {
+        try {
+            log.info("[数据] ====== aramgg 数据同步开始 ======");
+            syncAugments();
+            syncChampions();
+            syncItems();
+            syncChampionDetails();
+            syncHeroProfiles();
+            log.info("[数据] ====== aramgg 数据同步完成 ======");
+            Runnable cb = onSyncComplete;
+            if (cb != null) {
+                try { cb.run(); } catch (Exception e) { log.warn("[数据] 同步完成回调异常: {}", e.getMessage()); }
+            }
+        } catch (Exception e) {
+            log.error("[数据] 同步失败: {}", e.getMessage(), e);
+        } finally {
+            running.set(false);
+        }
+    }
+
+    // ===== 1. 海克斯全量 =====
+    private void syncAugments() throws Exception {
+        JsonNode root = getJson(baseUrl + augmentsFile);
+        List<Augment> list = new ArrayList<>();
+        root.fields().forEachRemaining(e -> {
+            JsonNode node = e.getValue();
+            if (!node.path("enabled").asBoolean(true)) return;
+            Augment a = new Augment();
+            a.setId(node.path("id").asInt());
+            a.setName(node.path("displayName").asText(""));
+            a.setEnName(node.path("name").asText(""));
+            a.setRarity(node.path("rarity").asInt(0));
+            a.setTierName(rarityName(node.path("rarity").asInt(0)));
+            a.setDescription(cleanHtml(node.path("description").asText("")));
+            a.setTooltip(cleanHtml(node.path("tooltip").asText("")));
+            a.setEnabled(true);
+            list.add(a);
+        });
+        dataWriteMapper.deleteAllAugments();
+        dataWriteMapper.batchInsertAugments(list);
+        log.info("[数据] 海克斯落库: {} 个", list.size());
+    }
+
+    // ===== 2. 英雄总榜 =====
+    private void syncChampions() throws Exception {
+        // 从 DDragon 官方拿 id→[称号name, 官方名title, 英文名] 映射
+        Map<Integer, String[]> nameById = fetchChampionNames();
+        JsonNode arr = getJson(baseUrl + championsFile);
+        List<Hero> list = new ArrayList<>();
+        for (JsonNode n : arr) {
+            Hero h = new Hero();
+            int id = n.path("championId").asInt();
+            h.setId(id);
+            String[] names = nameById.get(id);
+            h.setName(names != null ? names[0] : "英雄" + id);      // 称号（刀锋之影）
+            h.setOfficialName(names != null ? names[1] : "");      // 官方中文名（泰隆）
+            h.setEnName(names != null ? names[2] : "");            // 英文名
+            h.setTier("T" + n.path("tier").asText(""));
+            h.setWinRate(parseNullableDouble(n.path("winRate")));
+            h.setPickRate(parseNullableDouble(n.path("pickRate")));
+            h.setVersion(n.path("version").asText(""));
+            h.setDate(n.path("date").asText(""));
+            h.setWinRank(n.path("rank").asInt(0));
+            list.add(h);
+        }
+        dataWriteMapper.deleteAllHeroes();
+        dataWriteMapper.batchInsertHeroes(list);
+        log.info("[数据] 英雄榜落库: {} 个", list.size());
+    }
+
+    /** 从 DDragon 官方拉 id → [称号name, 官方中文名title, 英文名] 映射 */
+    private Map<Integer, String[]> fetchChampionNames() throws Exception {
+        Map<Integer, String[]> map = new HashMap<>();
+        try {
+            String ver = getJson("https://ddragon.leagueoflegends.com/api/versions.json").get(0).asText();
+            JsonNode data = getJson("https://ddragon.leagueoflegends.com/cdn/" + ver + "/data/zh_CN/champion.json").path("data");
+            data.fields().forEachRemaining(e -> {
+                JsonNode champ = e.getValue();
+                String key = champ.path("key").asText("");
+                if (!key.isEmpty()) {
+                    try { map.put(Integer.parseInt(key), new String[]{
+                            champ.path("name").asText(),    // 称号（刀锋之影）
+                            champ.path("title").asText(),   // 官方中文名（泰隆）
+                            e.getKey()});                   // 英文名
+                    }
+                    catch (NumberFormatException ignored) {}
+                }
+            });
+            log.info("[数据] DDragon 英雄名映射: {} 个", map.size());
+        } catch (Exception e) {
+            log.warn("[数据] DDragon 拉取失败: {}", e.getMessage());
+        }
+        return map;
+    }
+
+    // ===== 英雄档案（DDragon 单英雄 JSON：技能/玩法技巧）=====
+    private void syncHeroProfiles() throws Exception {
+        List<Hero> heroes = dataWriteMapper.findAllHeroes();
+        int total = heroes.size();
+        dataWriteMapper.deleteAllHeroProfiles();
+        java.util.List<com.example.demo.entity.HeroProfile> profiles =
+                java.util.Collections.synchronizedList(new ArrayList<>());
+        String ver = "";
+        try {
+            ver = getJson("https://ddragon.leagueoflegends.com/api/versions.json").get(0).asText();
+        } catch (Exception ignored) {}
+        String finalVer = ver;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(5);
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(total);
+        java.util.concurrent.atomic.AtomicInteger done = new java.util.concurrent.atomic.AtomicInteger(0);
+        for (Hero hero : heroes) {
+            pool.execute(() -> {
+                try {
+                    String enName = hero.getEnName();
+                    if (enName == null || enName.isEmpty()) return;
+                    try {
+                        JsonNode data = getJson("https://ddragon.leagueoflegends.com/cdn/" + finalVer + "/data/zh_CN/champion/"
+                                + enName + ".json").path("data").path(enName);
+                        if (data.isMissingNode()) return;
+                        com.example.demo.entity.HeroProfile p = new com.example.demo.entity.HeroProfile();
+                        p.setHeroId(hero.getId());
+                        p.setTitle(data.path("title").asText(""));
+                        p.setBlurb(data.path("blurb").asText(""));
+                        StringBuilder tags = new StringBuilder();
+                        data.path("tags").forEach(t -> { if (tags.length() > 0) tags.append(","); tags.append(t.asText()); });
+                        p.setTags(tags.toString());
+                        p.setPassive(data.path("passive").path("name").asText("")
+                                + "：" + cleanHtml(data.path("passive").path("description").asText("")));
+                        StringBuilder spells = new StringBuilder();
+                        int si = 0;
+                        for (JsonNode s : data.path("spells")) {
+                            if (si >= 4) break;
+                            if (spells.length() > 0) spells.append("\n");
+                            spells.append(s.path("name").asText(""))
+                                  .append("：").append(cleanHtml(s.path("description").asText("")));
+                            si++;
+                        }
+                        p.setSpells(spells.toString());
+                        p.setAllyTips(joinStrings(data.path("allytips")));
+                        p.setEnemyTips(joinStrings(data.path("enemytips")));
+                        p.setVersion(finalVer);
+                        profiles.add(p);
+                    } catch (Exception e) {
+                        log.warn("[数据] 英雄 {} 档案同步失败: {}", hero.getId(), e.getMessage());
+                    }
+                } finally {
+                    int d = done.incrementAndGet();
+                    if (d % 20 == 0 || d == total) {
+                        log.info("[数据] 英雄档案进度 {}/{}", d, total);
+                    }
+                    latch.countDown();
+                }
+            });
+        }
+        pool.shutdown();
+        try { latch.await(15, java.util.concurrent.TimeUnit.MINUTES); } catch (InterruptedException e) { }
+        if (!profiles.isEmpty()) {
+            dataWriteMapper.batchInsertHeroProfiles(profiles);
+        }
+        log.info("[数据] 英雄档案落库完成: {} 个", profiles.size());
+    }
+
+    private static String joinStrings(JsonNode arr) {
+        if (arr == null || !arr.isArray()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (JsonNode n : arr) {
+            if (sb.length() > 0) sb.append("\n");
+            sb.append(n.asText());
+        }
+        return sb.toString();
+    }
+
+    // ===== 装备全量（DDragon item.json，只留大乱斗版）=====
+    private void syncItems() throws Exception {
+        try {
+            String ver = getJson("https://ddragon.leagueoflegends.com/api/versions.json").get(0).asText();
+            JsonNode data = getJson("https://ddragon.leagueoflegends.com/cdn/" + ver + "/data/zh_CN/item.json").path("data");
+            List<com.example.demo.entity.Item> list = new ArrayList<>();
+            data.fields().forEachRemaining(e -> {
+                JsonNode n = e.getValue();
+                String name = n.path("name").asText("");
+                // 过滤：不可购买（任务物品）、无名称（占位）
+                boolean purchasable = n.path("gold").path("purchasable").asBoolean(false);
+                if (name.isEmpty() || !purchasable) return;
+                com.example.demo.entity.Item it = new com.example.demo.entity.Item();
+                it.setId(Integer.parseInt(e.getKey()));
+                it.setName(name);
+                it.setEnName(n.path("name").asText(""));
+                it.setDescription(cleanHtml(n.path("description").asText("")));
+                it.setPlaintext(n.path("plaintext").asText(""));
+                it.setTotalPrice(n.path("gold").path("total").asInt(0));
+                it.setBasePrice(n.path("gold").path("base").asInt(0));
+                // tags 逗号拼接
+                StringBuilder tags = new StringBuilder();
+                n.path("tags").forEach(t -> { if (tags.length() > 0) tags.append(","); tags.append(t.asText()); });
+                it.setTags(tags.toString());
+                // from/into 逗号拼接
+                it.setFromIds(joinIds(n.path("from")));
+                it.setIntoIds(joinIds(n.path("into")));
+                it.setVersion(ver);
+                list.add(it);
+            });
+            dataWriteMapper.deleteAllItems();
+            dataWriteMapper.batchInsertItems(list);
+            log.info("[数据] 装备落库: {} 个", list.size());
+        } catch (Exception e) {
+            log.warn("[数据] 装备采集失败: {}", e.getMessage());
+        }
+    }
+
+    private static String joinIds(JsonNode arr) {
+        if (arr == null || !arr.isArray()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (JsonNode n : arr) {
+            if (sb.length() > 0) sb.append(",");
+            sb.append(n.asText());
+        }
+        return sb.toString();
+    }
+
+    // ===== 3. 各英雄海克斯排名（并行）=====
+    private void syncChampionDetails() throws Exception {
+        List<Hero> heroes = dataWriteMapper.findAllHeroes();
+        int total = heroes.size();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(5);
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(total);
+        java.util.concurrent.atomic.AtomicInteger done = new java.util.concurrent.atomic.AtomicInteger(0);
+        for (Hero hero : heroes) {
+            pool.execute(() -> {
+                try {
+                    try {
+                        JsonNode root = getJson(baseUrl + championDetailsDir + "/" + hero.getId() + ".json");
+                        JsonNode pair = root.path("championAugments").get(0);
+                        if (pair == null || pair.size() < 2) return;
+                        JsonNode inner = mapper.readTree(pair.get(1).asText());
+                        JsonNode augs = inner.path("augments");
+                        dataWriteMapper.deleteHeroAugmentRanks(hero.getId());
+                        List<HeroAugmentRank> ranks = new ArrayList<>();
+                        augs.fields().forEachRemaining(e -> {
+                            JsonNode v = e.getValue();
+                            HeroAugmentRank r = new HeroAugmentRank();
+                            r.setHeroId(hero.getId());
+                            r.setAugmentId(Integer.parseInt(e.getKey()));
+                            r.setTier(v.path("tier").asText(""));
+                            r.setWinRank(v.path("rank").asInt(999));
+                            r.setTotal(v.path("total").asInt(0));
+                            r.setWinRate(parseNullableDouble(v.path("win_rate")));
+                            r.setPickRate(parseNullableDouble(v.path("pick_rate")));
+                            r.setNumGames(parseNullableLong(v.path("num_games")));
+                            r.setNumWinGames(parseNullableLong(v.path("num_win_games")));
+                            ranks.add(r);
+                        });
+                        dataWriteMapper.batchInsertHeroAugmentRanks(ranks);
+
+                        // 2. 推荐海克斯三连组合
+                        JsonNode trios = inner.path("augment_trios");
+                        dataWriteMapper.deleteHeroCombos(hero.getId());
+                        if (trios.isObject()) {
+                            List<com.example.demo.entity.AugmentCombo> combos = new ArrayList<>();
+                            java.util.List<java.util.Map.Entry<String, JsonNode>> entries = new ArrayList<>();
+                            trios.fields().forEachRemaining(entries::add);
+                            entries.sort((a, b) -> Double.compare(
+                                    parseNullableDouble(b.getValue().path("win_rate")) == null ? 0 : parseNullableDouble(b.getValue().path("win_rate")),
+                                    parseNullableDouble(a.getValue().path("win_rate")) == null ? 0 : parseNullableDouble(a.getValue().path("win_rate"))));
+                            int rankIdx = 0;
+                            for (java.util.Map.Entry<String, JsonNode> e : entries) {
+                                JsonNode v = e.getValue();
+                                com.example.demo.entity.AugmentCombo c = new com.example.demo.entity.AugmentCombo();
+                                c.setHeroId(hero.getId());
+                                c.setAugmentIds(e.getKey());
+                                c.setWinRate(parseNullableDouble(v.path("win_rate")));
+                                c.setPickRate(parseNullableDouble(v.path("pick_rate")));
+                                c.setNumGames(parseNullableLong(v.path("num_games")));
+                                c.setNumWinGames(parseNullableLong(v.path("num_win_games")));
+                                c.setWinRank(++rankIdx);
+                                combos.add(c);
+                            }
+                            if (!combos.isEmpty()) {
+                                dataWriteMapper.batchInsertHeroCombos(combos);
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.warn("[数据] 英雄 {} 排名同步失败: {}", hero.getId(), e.getMessage());
+                    }
+                    // 3. 装备 build 方案（aramgg 英雄页 HTML）
+                    try { syncHeroItemBuilds(hero.getId()); }
+                    catch (Exception e) { log.warn("[数据] 英雄 {} build失败: {}", hero.getId(), e.getMessage()); }
+                } finally {
+                    int d = done.incrementAndGet();
+                    if (d % 20 == 0 || d == total) {
+                        log.info("[数据] 英雄排名进度 {}/{}", d, total);
+                    }
+                    latch.countDown();
+                }
+            });
+            // 反爬：多线程下每英雄提交间隔小延时
+            try { Thread.sleep(30); } catch (InterruptedException ie) { return; }
+        }
+        pool.shutdown();
+        try { latch.await(15, java.util.concurrent.TimeUnit.MINUTES); } catch (InterruptedException e) { }
+        log.info("[数据] 英雄排名+组合+build 完成");
+    }
+
+    // ===== 装备 build 方案（解析 aramgg 英雄页 HTML）=====
+    private void syncHeroItemBuilds(int heroId) {
+        try {
+            String url = baseUrl + "/zh-CN/champion-stats/" + heroId;
+            org.jsoup.nodes.Document doc = org.jsoup.Jsoup.connect(url)
+                    .timeout(15000)
+                    .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36")
+                    .get();
+            dataWriteMapper.deleteHeroBuilds(heroId);
+            List<com.example.demo.entity.HeroItemBuild> builds = new ArrayList<>();
+            for (org.jsoup.nodes.Element panel : doc.select("[data-build-panel]")) {
+                int buildIndex = Integer.parseInt(panel.attr("data-build-panel"));
+                int groupIndex = 0;
+                for (org.jsoup.nodes.Element card : panel.select("span[data-slot=badge]")) {
+                    groupIndex++;
+                    Element container = card.parent().parent();
+                    if (container == null) continue;
+                    // 提取胜率/选取率（文本里含 胜率: X% 选取率: Y%）
+                    String blockText = container.text();
+                    java.util.regex.Matcher wm = java.util.regex.Pattern.compile("胜率: ([\\d.]+)%").matcher(blockText);
+                    java.util.regex.Matcher pm = java.util.regex.Pattern.compile("选取率: ([\\d.]+)%").matcher(blockText);
+                    double wr = wm.find() ? Double.parseDouble(wm.group(1)) / 100.0 : 0;
+                    double pr = pm.find() ? Double.parseDouble(pm.group(1)) / 100.0 : 0;
+                    // 该块的3件装备（img src 含 item-icons/{id}.png）
+                    int slot = 1;
+                    for (org.jsoup.nodes.Element img : container.select("img[src*='item-icons']")) {
+                        java.util.regex.Matcher idm = java.util.regex.Pattern.compile("item-icons/(\\d+)\\.png").matcher(img.attr("src"));
+                        if (!idm.find()) continue;
+                        com.example.demo.entity.HeroItemBuild b = new com.example.demo.entity.HeroItemBuild();
+                        b.setHeroId(heroId);
+                        b.setBuildIndex(buildIndex);
+                        b.setGroupIndex(groupIndex);
+                        b.setSlot(slot++);
+                        b.setItemId(Integer.parseInt(idm.group(1)));
+                        b.setWinRate(wr);
+                        b.setPickRate(pr);
+                        builds.add(b);
+                    }
+                }
+            }
+            if (!builds.isEmpty()) {
+                dataWriteMapper.batchInsertHeroBuilds(builds);
+            }
+        } catch (Exception e) {
+            log.warn("[数据] 英雄 {} 装备build解析失败: {}", heroId, e.getMessage());
+        }
+    }
+
+    /** 补采缺失 build 的英雄（之前采集失败漏掉的） */
+    public void syncMissingBuilds() {
+        List<Hero> heroes = dataWriteMapper.findAllHeroes();
+        int done = 0, missing = 0;
+        for (Hero hero : heroes) {
+            List<com.example.demo.entity.HeroItemBuild> existing = dataWriteMapper.findHeroBuilds(hero.getId());
+            if (existing != null && !existing.isEmpty()) continue;
+            missing++;
+            syncHeroItemBuilds(hero.getId());
+            done++;
+            if (done % 10 == 0 || done == missing) {
+                log.info("[数据] 补采build进度 {}/{}", done, missing);
+            }
+            try { Thread.sleep(200 + (int)(Math.random() * 200)); } catch (InterruptedException ie) { return; }
+        }
+        log.info("[数据] build补采完成，补采 {} 个英雄", done);
+    }
+
+    /** 检查并返回缺失 build 的英雄列表（供 API 查询） */
+    public List<Integer> getMissingBuildHeroes() {
+        List<Integer> missing = new ArrayList<>();
+        for (Hero hero : dataWriteMapper.findAllHeroes()) {
+            List<com.example.demo.entity.HeroItemBuild> existing = dataWriteMapper.findHeroBuilds(hero.getId());
+            if (existing == null || existing.isEmpty()) {
+                missing.add(hero.getId());
+            }
+        }
+        return missing;
+    }
+
+    // ===== 工具 =====
+    private JsonNode getJson(String url) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(20))
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36")
+                .GET()
+                .build();
+        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() != 200) throw new RuntimeException("HTTP " + resp.statusCode() + " for " + url);
+        return mapper.readTree(resp.body());
+    }
+
+    private static String cleanHtml(String s) {
+        if (s == null || s.isEmpty()) return "";
+        return s.replaceAll("<[^>]+>", "").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").trim();
+    }
+
+    private static String rarityName(int rarity) {
+        return switch (rarity) {
+            case 0 -> "白银";
+            case 1 -> "黄金";
+            case 2 -> "棱彩";
+            default -> "未知";
+        };
+    }
+
+    /** 解析可能为 String("0.534") 或 null 的数字字段 */
+    private static Double parseNullableDouble(JsonNode node) {
+        if (node == null || node.isNull() || node.isMissingNode()) return null;
+        String text = node.asText("");
+        if (text.isEmpty()) return null;
+        try { return Double.parseDouble(text); }
+        catch (NumberFormatException e) { return null; }
+    }
+
+    private static Long parseNullableLong(JsonNode node) {
+        if (node == null || node.isNull() || node.isMissingNode()) return null;
+        String text = node.asText("");
+        if (text.isEmpty()) return null;
+        try { return Long.parseLong(text); }
+        catch (NumberFormatException e) { return null; }
+    }
+}

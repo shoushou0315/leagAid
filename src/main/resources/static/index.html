@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>海克斯大乱斗助手</title>
+<style>
+body{font-family:sans-serif;max-width:900px;margin:20px auto;padding:10px}
+.container{display:flex;gap:15px}
+#sidebar{width:220px;flex-shrink:0}
+#sessionList{max-height:500px;overflow-y:auto;border:1px solid #ccc;border-radius:6px;padding:8px;background:#fafafa;font-size:13px}
+.session-item{padding:6px 8px;cursor:pointer;border-bottom:1px solid #eee;border-radius:4px}
+.session-item:hover{background:#eef}
+#main{flex:1}
+#chatBox{height:400px;overflow-y:auto;border:1px solid #ccc;padding:10px;margin-bottom:10px;background:#fafafa}
+.msg{margin:5px 0;padding:8px;border-radius:8px;max-width:80%;white-space:pre-wrap}
+.user{background:#dcf8c6;margin-left:auto;text-align:right}
+.ai{background:#eee}
+#input{display:flex;gap:5px}
+#input input{flex:1;padding:8px;border:1px solid #ccc;border-radius:4px}
+button{padding:8px 16px;border:none;border-radius:4px;cursor:pointer}
+#refresh{background:#ffc107}
+#voiceBtn{background:#6f42c1;color:#fff;font-size:13px;padding:8px 12px}
+#voiceBtn.recording{background:#dc3545}
+.voice-hint{font-size:11px;color:#888;margin-top:4px}
+.session-del{float:right;background:#f66;color:#fff;padding:1px 8px;font-size:11px;margin-left:6px}
+</style>
+</head>
+<body>
+<h3>海克斯大乱斗助手</h3>
+<div class="container">
+  <div id="sidebar">
+    <h4 style="margin-bottom:4px">历史会话</h4>
+    <div id="sessionList"></div>
+  </div>
+  <div id="main">
+    <div id="chatBox"></div>
+    <div id="input">
+      <input id="msg" placeholder="语音识别显示...">
+      <button id="voiceBtn">🎤 说话</button>
+      <button id="refresh">更新知识库</button>
+    </div>
+    <div class="voice-hint">按住 <b>F6</b> 或点击 🎤 说话，松开自动识别并发送</div>    <div id="voiceStatus" style="font-size:11px;color:#b00;margin-top:4px"></div>
+    <div id="curSession" style="font-size:12px;color:#888;margin-top:6px"></div>
+  </div>
+</div>
+<script>
+var sessionId = new Date().toISOString().replace(/[-:T]/g,'').slice(0,15);
+var chatBox = document.getElementById('chatBox');
+
+// 从游戏会话服务获取 sessionId（一局一轮对话，新局自动切换）
+async function syncSession(){
+    try{
+        var r = await fetch('/api/game/state');
+        var s = await r.json();
+        if(s && s.sessionId){
+            if(sessionId !== s.sessionId){
+                sessionId = s.sessionId;
+                chatBox.innerHTML = '';
+                addSysMsg('🎮 新对局开始，已开启新会话');
+                updateSessionLabel();
+            }
+        }
+    }catch(e){}
+}
+syncSession();
+setInterval(syncSession, 3000);
+
+document.getElementById('refresh').addEventListener('click', refresh);
+document.getElementById('voiceBtn').addEventListener('mousedown', startVoice);
+document.getElementById('voiceBtn').addEventListener('mouseup', stopVoice);
+document.getElementById('voiceBtn').addEventListener('mouseleave', stopVoice);
+updateSessionLabel();
+loadSessions();
+
+// ===== 语音输入（WebSocket 真流式：按住说话实时显示识别文字）=====
+var isRecording = false;
+var stream = null;
+var audioContext = null;
+var processor = null;
+var voiceWs = null;
+var finalText = '';
+
+function startVoice(){
+    if(isRecording) return;
+    isRecording = true;
+    finalText = '';
+    document.getElementById('voiceBtn').classList.add('recording');
+    document.getElementById('voiceBtn').textContent = '🔴 说话中...';
+    document.getElementById('voiceStatus').textContent = '正在听... 请说话';
+    document.getElementById('msg').value = '';  // 清空显示
+
+    // 连 WebSocket
+    var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    voiceWs = new WebSocket(proto + '://' + location.host + '/voice-ws');
+    voiceWs.binaryType = 'arraybuffer';
+    voiceWs.onmessage = function(e){
+        try{
+            var data = JSON.parse(e.data);
+            if(data.intermediate){
+                document.getElementById('msg').value = data.intermediate;
+            } else if(data.final){
+                finalText = data.final;
+                document.getElementById('msg').value = data.final;
+                if(/选海克斯|选哪个海克斯|帮我选海克斯/.test(data.final)){
+                    // 一键：识图 → LLM 推荐（流式显示）
+                    addMsg('user', data.final);
+                    document.getElementById('msg').value = '';
+                    var div = addMsg('ai', '识别中...');
+                    fetch('/api/game/hex/recognize?sessionId=' + sessionId).then(function(r){
+                        var reader = r.body.getReader();
+                        var decoder = new TextDecoder();
+                        var buf = '';
+                        div.innerText = '';
+                        function pump(){
+                            return reader.read().then(function(res){
+                                if(res.done){
+                                    var last = buf.split('\n').map(function(l){ return l.replace(/^data:\s*/, ''); }).join('\n').trim();
+                                    if(last){ div.innerText += last; scrollChat(); }
+                                    return;
+                                }
+                                buf += decoder.decode(res.value, {stream:true});
+                                var parts = buf.split('\n\n');
+                                buf = parts.pop();
+                                for(var i = 0; i < parts.length; i++){
+                                    var lines = parts[i].split('\n').map(function(l){ return l.replace(/^data:\s*/, ''); });
+                                    var text = lines.join('\n').trim();
+                                    if(text){ div.innerText += text; scrollChat(); }
+                                }
+                                return pump();
+                            });
+                        }
+                        return pump();
+                    }).catch(function(){ div.innerText = '识别失败'; scrollChat(); });
+                } else {
+                    send();  // 普通消息直接发
+                }
+            } else if(data.error){
+                document.getElementById('voiceStatus').textContent = '识别失败: ' + data.error;
+            }
+        }catch(e){}
+    };
+    voiceWs.onclose = function(){
+        if(isRecording) stopVoiceCleanup();
+    };
+    voiceWs.onopen = function(){
+        // 开始录音 + 逐帧发送
+        navigator.mediaDevices.getUserMedia({audio: true}).then(function(s){
+            stream = s;
+            // 用 16kHz 采样率创建 AudioContext（Chrome 支持），这样采集的 PCM 就是 16kHz
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
+            var source = audioContext.createMediaStreamSource(stream);
+            // 16kHz 单声道
+            var targetRate = 16000;
+            processor = audioContext.createScriptProcessor(4096, 1, 1);
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+            processor.onaudioprocess = function(e){
+                if(!isRecording) return;
+                var input = e.inputBuffer.getChannelData(0);
+                // 转 Int16 PCM
+                var pcm = new Int16Array(input.length);
+                for(var i = 0; i < input.length; i++){
+                    var v = Math.max(-1, Math.min(1, input[i]));
+                    pcm[i] = v < 0 ? v * 0x8000 : v * 0x7FFF;
+                }
+                if(voiceWs && voiceWs.readyState === WebSocket.OPEN){
+                    voiceWs.send(pcm.buffer);
+                }
+            };
+        }).catch(function(err){
+            document.getElementById('voiceStatus').textContent = '麦克风错误: ' + err.message;
+            stopVoiceCleanup();
+        });
+    };
+}
+
+function stopVoice(){
+    if(!isRecording) return;
+    isRecording = false;
+    document.getElementById('voiceBtn').classList.remove('recording');
+    document.getElementById('voiceBtn').textContent = '🎤 说话';
+    // 停止录音（处理器）
+    if(processor){ try{ processor.disconnect(); }catch(e){} processor = null; }
+    if(audioContext){ try{ audioContext.close(); }catch(e){} audioContext = null; }
+    if(stream){ stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
+    // 发 end 结束识别，等 final 回来后再关连接
+    if(voiceWs && voiceWs.readyState === WebSocket.OPEN){
+        voiceWs.send('end');
+    }
+    // 不立即 close，等服务端推 final 后由 onclose/onmessage 处理
+}
+
+function stopVoiceCleanup(){
+    if(processor){ try{ processor.disconnect(); }catch(e){} processor = null; }
+    if(audioContext){ try{ audioContext.close(); }catch(e){} audioContext = null; }
+    if(stream){ stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
+    if(voiceWs){ try{ voiceWs.close(); }catch(e){} voiceWs = null; }
+}
+
+// 全局热键语音（全屏游戏可用）：轮询后端 /api/voice/state，F6 按住开始/松开停止
+var voiceHotkeyPrev = false;
+setInterval(function(){
+    fetch('/api/voice/state').then(function(r){ return r.json(); }).then(function(s){
+        var active = !!s.active;
+        if(active && !voiceHotkeyPrev && !isRecording) startVoice();
+        if(!active && voiceHotkeyPrev && isRecording) stopVoice();
+        voiceHotkeyPrev = active;
+    }).catch(function(){});
+}, 300);
+
+async function send(){
+    var input = document.getElementById('msg');
+    var msg = input.value.trim();
+    if(!msg) return;
+    addMsg('user', msg);
+    input.value = '';
+    var div = addMsg('ai', '');
+    try{
+        var r = await fetch('/chat?sessionId=' + sessionId + '&message=' + encodeURIComponent(msg));
+        var reader = r.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = '';
+        while(true){
+            var {done, value} = await reader.read();
+            if(done) break;
+            buf += decoder.decode(value, {stream: true});
+            // 按 SSE 事件边界 \n\n 切分
+            var parts = buf.split('\n\n');
+            buf = parts.pop();
+            for(var i = 0; i < parts.length; i++){
+                // 每个事件可能多行：去每行开头的 data: 前缀
+                var lines = parts[i].split('\n').map(function(l){ return l.replace(/^data:\s*/, ''); });
+                var text = lines.join('\n').trim();
+                if(text){ div.innerText += text; scrollChat(); }
+            }
+        }
+        // 尾部残余
+        var last = buf.split('\n').map(function(l){ return l.replace(/^data:\s*/, ''); }).join('\n').trim();
+        if(last){ div.innerText += last; scrollChat(); }
+        loadSessions();
+    }catch(e){ div.innerText = '出错: ' + e; scrollChat(); }
+}
+
+
+
+async function loadSessions(){
+    try{
+        var r = await fetch('/sessions');
+        var list = await r.json();
+        var el = document.getElementById('sessionList');
+        el.innerHTML = '';
+        list.forEach(function(s){
+            var d = document.createElement('div');
+            d.className = 'session-item';
+            var del = document.createElement('span');
+            del.className = 'session-del';
+            del.textContent = '删除';
+            del.title = '删除该会话';
+            del.onclick = function(ev){ ev.stopPropagation(); deleteSession(s.sessionId); };
+            var text = document.createElement('span');
+            text.innerHTML = s.createdAt;
+            d.appendChild(del);
+            d.appendChild(text);
+            d.onclick = function(){ openSession(s.sessionId); };
+            el.appendChild(d);
+        });
+    }catch(e){}
+}
+
+async function openSession(id){
+    sessionId = id;
+    updateSessionLabel();
+    chatBox.innerHTML = '';
+    try{
+        var r = await fetch('/session/' + id);
+        var msgs = await r.json();
+        msgs.forEach(function(m){
+            if(m.startsWith('USER:')) addMsg('user', m.slice(5));
+            else if(m.startsWith('AI:')) addMsg('ai', m.slice(3));
+        });
+    }catch(e){ chatBox.innerHTML = '加载失败'; }
+}
+
+async function deleteSession(id){
+    try{
+        var r = await fetch('/session/' + id + '/delete');
+        var txt = await r.text();
+        if(txt.indexOf('已删除') === 0){
+            if(id === sessionId){ chatBox.innerHTML = ''; updateSessionLabel(); }
+            loadSessions();
+        } else {
+            alert(txt);
+        }
+    }catch(e){ alert('删除失败: ' + e); }
+}
+
+function updateSessionLabel(){
+    document.getElementById('curSession').textContent = '当前会话: ' + sessionId;
+}
+
+async function refresh(){
+    var div = addMsg('ai', '开始更新知识库...');
+    try{
+        await fetch('/refresh');
+        var poll = setInterval(async () => {
+            var s = await fetch('/status');
+            var txt = await s.text();
+            if(txt === '就绪'){
+                clearInterval(poll);
+                div.innerText = '知识库更新完成';
+            } else {
+                div.innerText = '更新中...';
+            }
+        }, 3000);
+    }catch(e){ div.innerText = '更新失败: ' + e; }
+}
+
+function addMsg(role, txt){
+    var d = document.createElement('div');
+    d.className = 'msg ' + role;
+    d.innerText = txt || '...';
+    chatBox.appendChild(d);
+    scrollChat();
+    return d;
+}
+
+// 滚动到底部（流式输出时保持最新可见）
+function scrollChat(){
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+// 系统消息（居中灰色提示条）
+function addSysMsg(txt){
+    var d = document.createElement('div');
+    d.style.cssText = 'text-align:center;color:#999;font-size:12px;margin:8px 0;padding:4px;background:#f0f0f0;border-radius:4px';
+    d.innerText = txt;
+    chatBox.appendChild(d);
+    chatBox.scrollTop = chatBox.scrollHeight;
+    return d;
+}
+</script>
+</body>
+</html>

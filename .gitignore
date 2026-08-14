@@ -1,0 +1,19 @@
+# 密钥（真实配置，勿提交）
+src/main/resources/application.yml.local
+
+# 运行时数据
+data/
+target/
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+
+src/main/resources/chat-memories/

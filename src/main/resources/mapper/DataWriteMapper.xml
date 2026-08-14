@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.DataWriteMapper">
+
+    <!-- ===== 英雄 ===== -->
+    <delete id="deleteAllHeroes">
+        DELETE FROM heroes
+    </delete>
+
+    <insert id="batchInsertHeroes">
+        <if test="list != null and list.size() > 0">
+        INSERT INTO heroes (id, name, official_name, en_name, tier, win_rate, pick_rate, version, date, win_rank)
+        VALUES
+        <foreach collection="list" item="h" separator=",">
+            (#{h.id}, #{h.name}, #{h.officialName}, #{h.enName}, #{h.tier}, #{h.winRate}, #{h.pickRate},
+             #{h.version}, #{h.date}, #{h.winRank})
+        </foreach>
+        </if>
+    </insert>
+
+    <select id="findAllHeroes" resultType="com.example.demo.entity.Hero">
+        SELECT id, name, official_name AS officialName, en_name AS enName, tier, win_rate AS winRate,
+               pick_rate AS pickRate, version, date, win_rank AS winRank
+        FROM heroes
+        ORDER BY id
+    </select>
+
+    <!-- ===== 海克斯 ===== -->
+    <delete id="deleteAllAugments">
+        DELETE FROM augments
+    </delete>
+
+    <insert id="batchInsertAugments">
+        <if test="list != null and list.size() > 0">
+        INSERT INTO augments (id, name, en_name, rarity, tier_name, description, tooltip, enabled)
+        VALUES
+        <foreach collection="list" item="a" separator=",">
+            (#{a.id}, #{a.name}, #{a.enName}, #{a.rarity}, #{a.tierName}, #{a.description}, #{a.tooltip}, #{a.enabled})
+        </foreach>
+        </if>
+    </insert>
+
+    <!-- ===== 英雄×海克斯排名 ===== -->
+    <delete id="deleteHeroAugmentRanks">
+        DELETE FROM hero_augment_rank WHERE hero_id = #{heroId}
+    </delete>
+
+    <insert id="batchInsertHeroAugmentRanks">
+        <if test="list != null and list.size() > 0">
+        INSERT INTO hero_augment_rank (hero_id, augment_id, tier, win_rank, total, win_rate, pick_rate, num_games, num_win_games)
+        VALUES
+        <foreach collection="list" item="r" separator=",">
+            (#{r.heroId}, #{r.augmentId}, #{r.tier}, #{r.winRank}, #{r.total}, #{r.winRate}, #{r.pickRate},
+             #{r.numGames}, #{r.numWinGames})
+        </foreach>
+        </if>
+    </insert>
+
+    <!-- ===== 三连组合 ===== -->
+    <delete id="deleteHeroCombos">
+        DELETE FROM augment_combos WHERE hero_id = #{heroId}
+    </delete>
+
+    <insert id="batchInsertHeroCombos">
+        <if test="list != null and list.size() > 0">
+        INSERT INTO augment_combos (hero_id, augment_ids, win_rate, pick_rate, num_games, num_win_games, win_rank)
+        VALUES
+        <foreach collection="list" item="c" separator=",">
+            (#{c.heroId}, #{c.augmentIds}, #{c.winRate}, #{c.pickRate}, #{c.numGames}, #{c.numWinGames}, #{c.winRank})
+        </foreach>
+        </if>
+    </insert>
+
+    <!-- ===== 装备 ===== -->
+    <delete id="deleteAllItems">
+        DELETE FROM items
+    </delete>
+
+    <insert id="batchInsertItems">
+        <if test="list != null and list.size() > 0">
+        INSERT INTO items (id, name, en_name, description, plaintext, total_price, base_price, tags, from_ids, into_ids, version)
+        VALUES
+        <foreach collection="list" item="it" separator=",">
+            (#{it.id}, #{it.name}, #{it.enName}, #{it.description}, #{it.plaintext}, #{it.totalPrice}, #{it.basePrice},
+             #{it.tags}, #{it.fromIds}, #{it.intoIds}, #{it.version})
+        </foreach>
+        </if>
+    </insert>
+
+    <!-- ===== 出装方案 ===== -->
+    <delete id="deleteHeroBuilds">
+        DELETE FROM hero_item_build WHERE hero_id = #{heroId}
+    </delete>
+
+    <insert id="batchInsertHeroBuilds">
+        <if test="list != null and list.size() > 0">
+        INSERT INTO hero_item_build (hero_id, build_index, group_index, slot, item_id, win_rate, pick_rate)
+        VALUES
+        <foreach collection="list" item="b" separator=",">
+            (#{b.heroId}, #{b.buildIndex}, #{b.groupIndex}, #{b.slot}, #{b.itemId}, #{b.winRate}, #{b.pickRate})
+        </foreach>
+        </if>
+    </insert>
+
+    <select id="findHeroBuilds" resultType="com.example.demo.entity.HeroItemBuild">
+        SELECT hero_id AS heroId, build_index AS buildIndex, group_index AS groupIndex, slot,
+               item_id AS itemId, win_rate AS winRate, pick_rate AS pickRate
+        FROM hero_item_build
+        WHERE hero_id = #{heroId}
+        ORDER BY build_index ASC, group_index ASC, slot ASC
+    </select>
+
+    <!-- ===== 英雄档案 ===== -->
+    <delete id="deleteAllHeroProfiles">
+        DELETE FROM hero_profiles
+    </delete>
+
+    <insert id="batchInsertHeroProfiles">
+        <if test="list != null and list.size() > 0">
+        INSERT INTO hero_profiles (hero_id, title, tags, blurb, passive, spells, ally_tips, enemy_tips, version)
+        VALUES
+        <foreach collection="list" item="p" separator=",">
+            (#{p.heroId}, #{p.title}, #{p.tags}, #{p.blurb}, #{p.passive}, #{p.spells}, #{p.allyTips}, #{p.enemyTips}, #{p.version})
+        </foreach>
+        </if>
+    </insert>
+
+</mapper>
