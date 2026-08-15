@@ -2,6 +2,9 @@
 src/main/resources/application.yml.local
 src/main/resources/application-local.yml
 
+# 面试用详细文档（不对公开放）
+DETAIL.md
+
 # 运行时数据
 data/
 target/

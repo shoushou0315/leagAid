@@ -20,7 +20,7 @@ import java.util.Map;
  *   - VGETATTR key element                            取元数据/文本
  *   - VCARD / VDIM                                    数量/维度
  *
- * 注意：536 维向量必须用 CommandArguments + executeCommand 构建，
+ * 注意：1024 维向量必须用 CommandArguments + executeCommand 构建，
  *       sendCommand(ProtocolCommand, String...) 的 varargs 对大参数有 bug（报 invalid vector specification）。
  */
 public class RedisVectorStore {

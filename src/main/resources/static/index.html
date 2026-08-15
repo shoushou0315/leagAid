@@ -16,7 +16,6 @@ body{font-family:sans-serif;max-width:900px;margin:20px auto;padding:10px}
 #input{display:flex;gap:5px}
 #input input{flex:1;padding:8px;border:1px solid #ccc;border-radius:4px}
 button{padding:8px 16px;border:none;border-radius:4px;cursor:pointer}
-#refresh{background:#ffc107}
 #voiceBtn{background:#6f42c1;color:#fff;font-size:13px;padding:8px 12px}
 #voiceBtn.recording{background:#dc3545}
 .voice-hint{font-size:11px;color:#888;margin-top:4px}
@@ -35,7 +34,6 @@ button{padding:8px 16px;border:none;border-radius:4px;cursor:pointer}
     <div id="input">
       <input id="msg" placeholder="语音识别显示...">
       <button id="voiceBtn">🎤 说话</button>
-      <button id="refresh">更新知识库</button>
     </div>
     <div class="voice-hint">按住 <b>F6</b> 或点击 🎤 说话，松开自动识别并发送</div>    <div id="voiceStatus" style="font-size:11px;color:#b00;margin-top:4px"></div>
     <div id="curSession" style="font-size:12px;color:#888;margin-top:6px"></div>
@@ -63,7 +61,6 @@ async function syncSession(){
 syncSession();
 setInterval(syncSession, 3000);
 
-document.getElementById('refresh').addEventListener('click', refresh);
 document.getElementById('voiceBtn').addEventListener('mousedown', startVoice);
 document.getElementById('voiceBtn').addEventListener('mouseup', stopVoice);
 document.getElementById('voiceBtn').addEventListener('mouseleave', stopVoice);
@@ -339,23 +336,6 @@ async function deleteSession(id){
 
 function updateSessionLabel(){
     document.getElementById('curSession').textContent = '当前会话: ' + sessionId;
-}
-
-async function refresh(){
-    var div = addMsg('ai', '开始更新知识库...');
-    try{
-        await fetch('/refresh');
-        var poll = setInterval(async () => {
-            var s = await fetch('/status');
-            var txt = await s.text();
-            if(txt === '就绪'){
-                clearInterval(poll);
-                div.innerText = '知识库更新完成';
-            } else {
-                div.innerText = '更新中...';
-            }
-        }, 3000);
-    }catch(e){ div.innerText = '更新失败: ' + e; }
 }
 
 function addMsg(role, txt){
