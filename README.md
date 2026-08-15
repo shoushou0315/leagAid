@@ -111,10 +111,11 @@ ChatController ──> QueryRouter(硬路由，正则)
 | `tryFixedQuery()` | 固定查询：英雄胜率/海克斯排名/出装/玩法/三连组合/排行榜 |
 | `queryKnowledge()` | 语义检索：按效果/机制描述找装备或海克斯（Redis 8 Vector Set） |
 
-### 回答路由（两级）
+### 回答路由（三级）
 
 1. **硬路由 `QueryRouter`**：正则识别高频固定查询（英雄排行/数据包/"英雄有了X"组合），命中直接返回数据，0 次 LLM 调用。
-2. **LLM 工具链**：硬路由 miss 后交给 Agent。系统提示词按问题分类（选海克斯/出装/联动/对抗/玩法/组合/统计/语义）引导工具选择；固定查询已由硬路由试过，提示词约束不重复调 `tryFixedQuery`。
+2. **固定查询 `tryFixedQuery`**：硬路由 miss 后交给 Agent，系统提示词按问题分类（选海克斯/出装/联动/对抗/玩法/组合/统计）引导先试固定查询（MyBatis），命中即基于完整数据包回答。
+3. **自由查询 + RAG**：固定查询未命中 → `queryDb` 参数化查询 / `getSynergy` 机制联动分析；按效果/机制描述找装备/海克斯时用 `queryKnowledge`（Redis 8 Vector Set 语义检索兜底）。
 
 ### 防幻觉设计
 
