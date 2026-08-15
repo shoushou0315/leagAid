@@ -10,6 +10,8 @@ public class DemoApplication {
     public static void main(String[] args) {
         // 禁用 headless：需要 Robot 截图（海克斯识别）访问屏幕
         System.setProperty("java.awt.headless", "false");
+        // 外部配置文件优先：程序同目录下放 config.yml（含 API key/数据库密码）则自动加载并覆盖默认值
+        System.setProperty("spring.config.additional-location", "optional:file:./config.yml");
         SpringApplication app = new SpringApplication(DemoApplication.class);
         app.setDefaultProperties(java.util.Map.of(
                 "server.port", "8080"

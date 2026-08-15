@@ -54,8 +54,8 @@ public class AppConfig {
                 .modelName(chatModel)
                 .customParameters(java.util.Map.of("enable_thinking", false))  // qwen3 关闭 thinking
                 .accumulateToolCallId(true)  // qwen 流式 tool_calls 的 id 从完整值变空串，需累积避免拼接错乱
-                .logRequests(true)
-                .logResponses(true)
+                .logRequests(false)  // 关闭 HTTP 请求日志，避免刷屏
+                .logResponses(false)  // 关闭 HTTP 响应日志
                 .build();
         return new com.example.demo.model.QwenStreamingChatModel(raw);  // 清洗 tool arguments 尾逗号
     }

@@ -1,6 +1,7 @@
 # 密钥（真实配置，勿提交）
 src/main/resources/application.yml.local
 src/main/resources/application-local.yml
+config.yml
 
 # 面试用详细文档（不对公开放）
 DETAIL.md
@@ -8,6 +9,7 @@ DETAIL.md
 # 运行时数据
 data/
 target/
+dump.rdb
 
 # IDE
 .idea/

@@ -17,10 +17,11 @@
 ## ✨ 核心亮点
 
 - 🎤 **全语音交互**：按住 **F6** 说话，松开自动识别发送（JNativeHook 全局热键，**全屏游戏可用**）
-- 👁 **一键选海克斯**：说"选哪个海克斯"→ 自动截图 → **qwen-vl-max 视觉识别** → LLM 结合阵容/装备推荐
+- 👁 **一键选海克斯**：说"选哪个海克斯"→ 自动截图 → **qwen-vl-max 视觉识别** → LLM 结合**英雄被动+技能联动**、阵容、装备推荐
 - 📊 **实时对局感知**：AI 自动获取自己/双方阵容/板凳/装备/熟练度/已选海克斯
 - 🧠 **多工具 Agent**：10 个工具（固定查询 / 参数化查询 / 机制联动 / 语义检索 / 游戏状态 / 海克斯识别 / 知识库更新）
 - 🔄 **一局一轮对话**：sessionId 锚定，换局自动切会话，记忆持久化
+- 💬 **回答范畴放宽**：游戏问题走工具链专业回答；非游戏闲聊用常识友好回应
 - 🛡 **防幻觉**：所有数据来自工具返回，查不到如实说明，不编造胜率/排名
 
 ## 🚀 快速开始
@@ -38,16 +39,16 @@
 ### 启动
 
 ```bash
-# 1. 配置密钥（application.yml，或环境变量）
+# 1. 配置密钥（config.yml，见下）
 # 2. 启动 MySQL + Redis
 # 3. 管理员权限运行（JNativeHook 热键 + LCU 认证需要）
 mvn spring-boot:run
 # 浏览器打开 http://localhost:8080
 ```
 
-- **IDEA 直接 Run**：`DemoApplication` 默认激活 `local` profile，自动加载 `application-local.yml`（真实密钥/密码，该文件不入库）
-- **一键脚本**：双击根目录 `start.bat`（自提权 → 打包 → 以 local profile 启动）
-- **本机密钥**：复制 `application.yml` 为 `application-local.yml` 填入真实值即可，或使用环境变量
+- **一键脚本**：双击根目录 `start.bat`（自提权 → 拉起 Redis/MySQL → 解压应用 → 打开浏览器 → 脚本自动关闭，应用日志窗口保留）
+- **本机密钥**：根目录 `config.yml`（已在 .gitignore 排除，勿提交）；对方使用可参考 `config.example.yml` 模板
+- **开发运行**：IDEA 直接 Run `DemoApplication`，默认激活 `local` profile，加载 `application-local.yml`（真实密钥/密码，该文件不入库）
 
 > ⚠️ 需**管理员权限**运行；启动后等待 LOL 客户端（自动重连，先开项目后开游戏也可）；游戏内按 **F6** 说话。
 
@@ -130,6 +131,7 @@ ChatController ──> QueryRouter(硬路由，正则)
 
 1. **硬路由 `QueryRouter`**（代码层）：正则识别高频固定查询（英雄排行/数据包/"英雄有了X"组合），**按问题类型裁剪**（问出装只返回出装，问海克斯只返回海克斯），命中直接返回数据，0 次 LLM 调用。
 2. **LLM 工具链**（硬路由 miss 后）：提示词按问题类型 A-H 分流——
+   - 选海克斯：`recognizeHex` 截图识别 → `getGameState` 看阵容/装备 → **`getSynergy` 逐条分析被动+Q/W/E/R 与候选海克斯联动** → 结合对面阵容/已有出装推荐
    - 数据类：`tryFixedQuery` 固定查询 → 未命中走 `queryDb` 参数化查询 / `getSynergy` 机制联动
    - 描述类：`queryKnowledge` 语义检索（RAG），**与动态 SQL 并行车道**（`queryDb` 的 keyword 只匹配名字，按效果/机制描述找装备/海克斯必须走 RAG）
    - 更新类：`updateKnowledge` 触发全量同步 + 重建向量索引（更新期间 `/chat` 拦截所有回答）

@@ -1,0 +1,18 @@
+# ============================================
+#  leagAid 外部配置文件
+#  复制此文件为 config.yml 并填写自己的密钥
+#  config.yml 必须与 leagAid.exe 放在同一目录
+# ============================================
+
+# AI 密钥（阿里云百炼 DashScope，https://bailian.console.aliyun.com 获取）
+# 聊天 + 截图识别 + 语音识别共用一个 DashScope key 即可
+chat:
+  api-key: 在这里填你的 DashScope API Key
+
+qwen:
+  api-key: 在这里填你的 DashScope API Key
+
+# 数据库密码（本机 MySQL，root 用户的密码）
+spring:
+  datasource:
+    password: 在这里填你的 MySQL root 密码
