@@ -1,5 +1,6 @@
 # 密钥（真实配置，勿提交）
 src/main/resources/application.yml.local
+src/main/resources/application-local.yml
 
 # 运行时数据
 data/

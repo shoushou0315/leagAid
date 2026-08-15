@@ -14,6 +14,8 @@ public class DemoApplication {
         app.setDefaultProperties(java.util.Map.of(
                 "server.port", "8080"
         ));
+        // 默认激活 local profile（加载 application-local.yml 真实密钥/密码，该文件不入库）
+        app.setAdditionalProfiles("local");
         app.run(args);
     }
 }

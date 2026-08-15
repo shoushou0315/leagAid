@@ -46,7 +46,7 @@ public class ChatController {
     public Flux<String> chat(@RequestParam(defaultValue = "anonymous") String sessionId,
                              @RequestParam String message) {
         if (ragRetriever != null && !ragRetriever.isReady()) {
-            return Flux.just("【知识库构建中】向量索引尚未就绪，暂时无法回答问题。请稍后重试，或刷新 /refresh 触发更新。");
+            return Flux.just("【知识库更新中】数据正在同步，暂时无法回答问题。请稍后重试，或刷新 /refresh 查看更新进度。");
         }
         String routed = queryRouter.route(message);
         if (routed != null) {

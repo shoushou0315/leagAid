@@ -71,12 +71,59 @@ updateSessionLabel();
 loadSessions();
 
 // ===== 语音输入（WebSocket 真流式：按住说话实时显示识别文字）=====
+// 预初始化录音管线（页面加载即拿麦克风+建AudioContext），消除按住瞬间的初始化延迟；
+// pre-roll 缓冲保留最近 ~400ms 音频，按住时先补发，避免第一个字被吞。
 var isRecording = false;
 var stream = null;
 var audioContext = null;
 var processor = null;
 var voiceWs = null;
 var finalText = '';
+var audioReady = false;
+var preRoll = [];          // Int16Array 段
+var preRollMaxSamples = 16000 * 0.4;  // 400ms @16kHz
+
+function toPcm16(input){
+    var pcm = new Int16Array(input.length);
+    for(var i = 0; i < input.length; i++){
+        var v = Math.max(-1, Math.min(1, input[i]));
+        pcm[i] = v < 0 ? v * 0x8000 : v * 0x7FFF;
+    }
+    return pcm;
+}
+
+// 页面加载即准备麦克风 + 音频处理管线（消除按下瞬间的 getUserMedia/AudioContext 延迟）
+function initAudio(){
+    if(audioReady) return;
+    navigator.mediaDevices.getUserMedia({audio: true}).then(function(s){
+        audioReady = true;
+        stream = s;
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
+        if(audioContext.state === 'suspended'){ try{ audioContext.resume(); }catch(e){} }
+        var source = audioContext.createMediaStreamSource(stream);
+        processor = audioContext.createScriptProcessor(2048, 1, 1);
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+        processor.onaudioprocess = function(e){
+            var pcm = toPcm16(e.inputBuffer.getChannelData(0));
+            if(!isRecording){
+                // 未按住：只写 pre-roll 缓冲（保留最近 400ms）
+                preRoll.push(pcm);
+                var total = 0;
+                for(var i = 0; i < preRoll.length; i++) total += preRoll[i].length;
+                while(total > preRollMaxSamples && preRoll.length > 1){
+                    total -= preRoll[0].length;
+                    preRoll.shift();
+                }
+            } else if(voiceWs && voiceWs.readyState === WebSocket.OPEN){
+                voiceWs.send(pcm.buffer);
+            }
+        };
+    }).catch(function(err){
+        // 首次未授权/失败：留到 startVoice 时再试
+        audioReady = false;
+    });
+}
 
 function startVoice(){
     if(isRecording) return;
@@ -86,6 +133,8 @@ function startVoice(){
     document.getElementById('voiceBtn').textContent = '🔴 说话中...';
     document.getElementById('voiceStatus').textContent = '正在听... 请说话';
     document.getElementById('msg').value = '';  // 清空显示
+
+    if(!audioReady) initAudio();
 
     // 连 WebSocket
     var proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -141,46 +190,32 @@ function startVoice(){
         if(isRecording) stopVoiceCleanup();
     };
     voiceWs.onopen = function(){
-        // 开始录音 + 逐帧发送
-        navigator.mediaDevices.getUserMedia({audio: true}).then(function(s){
-            stream = s;
-            // 用 16kHz 采样率创建 AudioContext（Chrome 支持），这样采集的 PCM 就是 16kHz
-            audioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
-            var source = audioContext.createMediaStreamSource(stream);
-            // 16kHz 单声道
-            var targetRate = 16000;
-            processor = audioContext.createScriptProcessor(4096, 1, 1);
-            source.connect(processor);
-            processor.connect(audioContext.destination);
-            processor.onaudioprocess = function(e){
-                if(!isRecording) return;
-                var input = e.inputBuffer.getChannelData(0);
-                // 转 Int16 PCM
-                var pcm = new Int16Array(input.length);
-                for(var i = 0; i < input.length; i++){
-                    var v = Math.max(-1, Math.min(1, input[i]));
-                    pcm[i] = v < 0 ? v * 0x8000 : v * 0x7FFF;
-                }
-                if(voiceWs && voiceWs.readyState === WebSocket.OPEN){
-                    voiceWs.send(pcm.buffer);
-                }
-            };
-        }).catch(function(err){
-            document.getElementById('voiceStatus').textContent = '麦克风错误: ' + err.message;
-            stopVoiceCleanup();
-        });
+        // 连接建立：先补发 pre-roll 缓冲（最近的音频），再接实时帧，避免第一个字丢失
+        if(preRoll.length > 0){
+            var total = 0;
+            for(var i = 0; i < preRoll.length; i++) total += preRoll[i].length;
+            var merged = new Int16Array(total);
+            var off = 0;
+            for(var j = 0; j < preRoll.length; j++){ merged.set(preRoll[j], off); off += preRoll[j].length; }
+            preRoll = [];
+            if(voiceWs && voiceWs.readyState === WebSocket.OPEN){
+                voiceWs.send(merged.buffer);
+            }
+        }
     };
 }
 
 function stopVoice(){
     if(!isRecording) return;
     isRecording = false;
+    preRoll = [];  // 清空缓冲，避免下次按下发送旧音频
     document.getElementById('voiceBtn').classList.remove('recording');
     document.getElementById('voiceBtn').textContent = '🎤 说话';
     // 停止录音（处理器）
     if(processor){ try{ processor.disconnect(); }catch(e){} processor = null; }
     if(audioContext){ try{ audioContext.close(); }catch(e){} audioContext = null; }
     if(stream){ stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
+    audioReady = false;
     // 发 end 结束识别，等 final 回来后再关连接
     if(voiceWs && voiceWs.readyState === WebSocket.OPEN){
         voiceWs.send('end');
@@ -192,19 +227,29 @@ function stopVoiceCleanup(){
     if(processor){ try{ processor.disconnect(); }catch(e){} processor = null; }
     if(audioContext){ try{ audioContext.close(); }catch(e){} audioContext = null; }
     if(stream){ stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
+    audioReady = false;
     if(voiceWs){ try{ voiceWs.close(); }catch(e){} voiceWs = null; }
 }
 
-// 全局热键语音（全屏游戏可用）：轮询后端 /api/voice/state，F6 按住开始/松开停止
+initAudio();  // 页面加载即预热麦克风，按住说话不再吞第一个字
+
+// 全局热键语音（全屏游戏可用）：SSE 实时推送 F6 状态，按住开始/松开停止（替代原 300ms 轮询，响应更快）
 var voiceHotkeyPrev = false;
-setInterval(function(){
-    fetch('/api/voice/state').then(function(r){ return r.json(); }).then(function(s){
+var hotkeySource = new EventSource('/api/voice/events');
+hotkeySource.onmessage = function(e){
+    try{
+        var s = JSON.parse(e.data);
         var active = !!s.active;
         if(active && !voiceHotkeyPrev && !isRecording) startVoice();
         if(!active && voiceHotkeyPrev && isRecording) stopVoice();
         voiceHotkeyPrev = active;
-    }).catch(function(){});
-}, 300);
+    }catch(err){}
+};
+// EventSource 断线自动重连；浏览器标签页失活导致连接关闭时，避免残留录音态
+window.addEventListener('beforeunload', function(){
+    if(isRecording) stopVoice();
+    hotkeySource.close();
+});
 
 async function send(){
     var input = document.getElementById('msg');

@@ -41,11 +41,11 @@ public class AutoWatcher {
 
     /** 启动采集（Spring 调用，不阻塞） */
     public static boolean connectAndStart() {
-        System.out.println("========== 海克斯大乱斗助手（采集） ==========");
         lcu = new LcuClient();
         if (!lcu.connect()) {
             return false;
         }
+        System.out.println("========== 海克斯大乱斗助手（采集） ==========");
         ta = new TeammateAnalyzer(lcu);
         ta.loadMaps();
 
@@ -87,8 +87,7 @@ public class AutoWatcher {
         // 启动 DataHub → Redis 快照同步（AI 助手实时读取）
         DataHubRedisSync.start("127.0.0.1", 6379);
 
-        // 启动语音全局热键（全屏游戏也能按 F6 说话）
-        VoiceHotkeyService.startStatic();
+        // 语音全局热键已由 LeagAidRunner 在 Spring 启动时注册，此处不再重复
 
         new GamePhaseWatcher(lcu, AutoWatcher::onPhaseChange).start();
         System.out.println("[OK] 采集已启动");

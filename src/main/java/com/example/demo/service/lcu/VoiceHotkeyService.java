@@ -5,11 +5,16 @@ import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyListener;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
+
 /**
  * 全局热键语音触发（全屏游戏也可用，JNativeHook 捕获键盘事件不受窗口焦点影响）。
  *
  * F6 按下 → voiceActive=true；F6 松开 → voiceActive=false。
- * 前端轮询 /api/voice/state 读取该标志，控制浏览器录音开始/停止。
+ * 状态变化通过监听器实时推送（SSE /api/voice/events），前端无需轮询。
+ * 兼容接口 /api/voice/state 仍可读取当前值。
  *
  * 静态单例：AutoWatcher 采集启动时通过 startStatic() 拉起。
  */
@@ -20,12 +25,23 @@ public class VoiceHotkeyService {
     private static volatile boolean started = false;
 
     private volatile boolean voiceActive = false;
+    private final List<Consumer<Boolean>> listeners = new CopyOnWriteArrayList<>();
 
     public static VoiceHotkeyService getInstance() { return INSTANCE; }
 
     /** 启动全局热键监听（幂等） */
     public static void startStatic() {
         INSTANCE.start();
+    }
+
+    /** 订阅热键状态变化（true=按住，false=松开），返回后需调用 removeListener 解除 */
+    public void addListener(Consumer<Boolean> listener) {
+        listeners.add(listener);
+    }
+
+    /** 解除订阅（SSE 连接断开/超时调用） */
+    public void removeListener(Consumer<Boolean> listener) {
+        listeners.remove(listener);
     }
 
     private synchronized void start() {
@@ -37,20 +53,28 @@ public class VoiceHotkeyService {
                 @Override
                 public void nativeKeyPressed(NativeKeyEvent e) {
                     if (e.getKeyCode() == NativeKeyEvent.VC_F6) {
-                        voiceActive = true;
+                        setVoiceActive(true);
                     }
                 }
 
                 @Override
                 public void nativeKeyReleased(NativeKeyEvent e) {
                     if (e.getKeyCode() == NativeKeyEvent.VC_F6) {
-                        voiceActive = false;
+                        setVoiceActive(false);
                     }
                 }
             });
             System.out.println("[语音热键] F6 全局热键已注册（全屏可用）");
         } catch (Exception e) {
             System.out.println("[语音热键] 注册失败: " + e.getMessage());
+        }
+    }
+
+    private void setVoiceActive(boolean active) {
+        if (voiceActive == active) return;
+        voiceActive = active;
+        for (Consumer<Boolean> l : listeners) {
+            try { l.accept(active); } catch (Exception ignored) {}
         }
     }
 

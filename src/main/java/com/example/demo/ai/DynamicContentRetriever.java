@@ -181,6 +181,14 @@ public class DynamicContentRetriever {
         dataService.syncAsync();
     }
 
+    /** 语音触发知识库更新工具：用户说"更新知识库/刷新数据"时调用 */
+    @Tool("更新知识库：触发全量数据同步并重建向量索引。当用户说'更新知识库/刷新数据/更新数据/重新学习'等要求更新数据时调用本工具")
+    public String updateKnowledge(@P("无需参数") String unused) {
+        System.out.println(">>> [Tool] updateKnowledge 调用");
+        refresh();
+        return "已触发知识库更新：正在全量同步数据并重建向量索引。更新完成后语义检索（queryKnowledge）自动生效，无需重启。";
+    }
+
     /** 数据就绪：向量索引构建完成（含历史磁盘索引） */
     public boolean isReady() {
         return vectorReady;
