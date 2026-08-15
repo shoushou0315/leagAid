@@ -26,7 +26,7 @@ public class FixedQueryTools {
 
     @Tool("尝试用固定查询回答。命中英雄后一次性返回该英雄的完整数据包：胜率/Tier + 海克斯排名 + 出装方案 + 玩法档案。也支持'英雄有了/拿到/刷到 某海克斯'的组合查询。命中返回数据；未命中返回【未命中固定查询，请使用自由查询】")
     public String tryFixedQuery(@P("用户的问题") String question) {
-        System.out.println(">>> [Tool] tryFixedQuery 调用: " + question);
+        System.out.println("[工具] tryFixedQuery: " + question);
         return query(question);
     }
 
@@ -54,40 +54,50 @@ public class FixedQueryTools {
         Object heroId = hero.get("id");
         String heroDbName = String.valueOf(hero.get("name"));
 
-        // 4. 一次性返回完整数据包（不再按关键词单返回）
-        StringBuilder sb = new StringBuilder("【" + heroDbName + " 完整数据】\n");
+        // 判断问题类型，按需返回（避免问出装却返回海克斯/技能等无关内容）
+        boolean askBuild = question.matches(".*(出装|出什么|出啥|怎么出|咋出|穿什么).*");
+        boolean askHex = question.matches(".*(海克斯|强化|选什么|选啥|符文).*");
+        boolean askPlay = question.matches(".*(怎么玩|咋玩|怎么打|咋打|玩法|技能|连招).*");
+        boolean askStat = question.matches(".*(胜率|Tier|强度|排行|排名|厉害吗|厉害不|强不强|咋样|怎么样).*");
 
-        // 胜率/Tier
+        // 4. 按问题类型返回对应数据包
+        StringBuilder sb = new StringBuilder("【" + heroDbName + " 数据】\n");
+
+        // 胜率/Tier（默认返回；或明确问胜率）
         Map<String, Object> stats = heroMapper.getHeroStats((Integer) heroId);
-        if (stats != null && !stats.isEmpty()) {
+        if (stats != null && !stats.isEmpty() && (!askBuild && !askHex && !askPlay || askStat)) {
             sb.append("【数据】").append(formatStats(stats)).append("\n");
         }
-        // 海克斯排名
-        List<Map<String, Object>> augs = heroMapper.getHeroAugments((Integer) heroId, 5);
-        if (!augs.isEmpty()) {
-            sb.append("\n").append(formatAugments(heroDbName, augs)).append("\n");
+        // 海克斯排名（问海克斯时）
+        if (askHex) {
+            List<Map<String, Object>> augs = heroMapper.getHeroAugments((Integer) heroId, 5);
+            if (!augs.isEmpty()) {
+                sb.append("\n").append(formatAugments(heroDbName, augs)).append("\n");
+            }
         }
-        // 出装方案
-        List<Map<String, Object>> builds = heroMapper.getBuilds((Integer) heroId);
-        if (!builds.isEmpty()) {
-            sb.append("\n").append(formatBuilds(heroDbName, builds)).append("\n");
-        } else if (question.matches(".*(出装|出什么|怎么出).*")) {
-            // 用户明确问出装，但该英雄暂无 build 数据（aramgg 新英雄/JS渲染导致采集为空）
-            // → 返回未命中，让 LLM 用 getSynergy/queryDb 结合装备知识兜底推荐，避免返回"空出装"误导
-            return "【未命中固定查询，请使用自由查询】";
+        // 出装方案（问出装时）
+        if (askBuild) {
+            List<Map<String, Object>> builds = heroMapper.getBuilds((Integer) heroId);
+            if (!builds.isEmpty()) {
+                sb.append("\n").append(formatBuilds(heroDbName, builds)).append("\n");
+                List<Map<String, Object>> exts = heroMapper.getHeroExt((Integer) heroId);
+                if (!exts.isEmpty()) {
+                    sb.append("\n").append(formatExt(heroDbName, exts)).append("\n");
+                }
+            } else {
+                // 问出装但无 build 数据 → 未命中，让 LLM 兜底
+                return "【未命中固定查询，请使用自由查询】";
+            }
         }
-        // 扩展装备（情境/推荐）
-        List<Map<String, Object>> exts = heroMapper.getHeroExt((Integer) heroId);
-        if (!exts.isEmpty()) {
-            sb.append("\n").append(formatExt(heroDbName, exts)).append("\n");
-        }
-        // 玩法档案
-        Map<String, Object> profile = heroMapper.getHeroProfile((Integer) heroId);
-        if (profile != null && !profile.isEmpty()) {
-            sb.append("\n").append(formatProfile(heroDbName, profile)).append("\n");
+        // 玩法档案（问玩法/技能时）
+        if (askPlay) {
+            Map<String, Object> profile = heroMapper.getHeroProfile((Integer) heroId);
+            if (profile != null && !profile.isEmpty()) {
+                sb.append("\n").append(formatProfile(heroDbName, profile)).append("\n");
+            }
         }
 
-        sb.append("\n以上是固定查询的完整数据。如需更深入的机制分析，可再用自由查询(getSynergy/queryDb)。");
+        sb.append("\n以上是固定查询数据。如需更深入的机制分析，可再用自由查询(getSynergy/queryDb)。");
         return sb.toString();
     }
 
@@ -156,21 +166,32 @@ public class FixedQueryTools {
         return null;
     }
 
-    /** 从问题中提取英雄名（常见模式） */
+    /** 从问题中提取英雄名（常见模式，含口语：咋/啥/怎么 变体） */
     private String extractHeroName(String q) {
-        // "X怎么玩" "X选什么海克斯" "X出什么装" "X的胜率" 等，取开头到关键词前
-        String[] patterns = {"怎么玩", "选什么海克斯", "选什么", "出什么装", "出什么", "的胜率", "的Tier", "的强度", "出装", "怎么出装"};
+        // "X怎么玩/咋玩" "X选什么海克斯" "X出什么装/咋出装" "X的胜率" 等，取开头到关键词前
+        String[] patterns = {
+                // 玩法
+                "咋玩", "怎么玩", "怎么打", "咋打", "什么技能", "啥技能", "技能怎么连", "怎么连招", "连招",
+                // 海克斯
+                "选什么海克斯", "选啥海克斯", "选什么强化", "选啥强化", "选什么", "选啥",
+                // 出装
+                "出什么装", "出啥装", "出什么装备", "出啥装备", "咋出装", "怎么出装", "出什么", "出啥",
+                // 胜率/强度
+                "的胜率", "的Tier", "的强度", "强不强", "厉害吗", "厉害不", "咋样", "怎么样",
+                // 兜底
+                "出装", "怎么出"
+        };
         for (String p : patterns) {
             int idx = q.indexOf(p);
             if (idx > 0) {
                 String name = q.substring(0, idx).trim();
                 // 去掉可能的前缀（"我玩到""我选了""帮我看看"等）
-                name = name.replaceAll("^(我|帮我|请问|我想|玩到|选了|问一下|想)", "").trim();
+                name = name.replaceAll("^(我|帮我|请问|我想|玩到|选了|问一下|想|给我)", "").trim();
                 if (name.length() >= 2 && name.length() <= 6) return name;
             }
         }
         // 尝试"X 怎么玩"带空格
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^([\\u4e00-\\u9fa5]{2,6})\\s+(怎么|选|出|的|玩)").matcher(q);
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^([\\u4e00-\\u9fa5]{2,6})\\s+(怎么|咋|啥|选|出|的|玩)").matcher(q);
         if (m.find()) return m.group(1);
         return null;
     }

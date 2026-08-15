@@ -40,17 +40,18 @@ public class QueryRouter {
         total.incrementAndGet();
         // 追问型问题：多轮对话中带上下文的追问，固定查询无法独立命中，直接放行
         if (isFollowUp(question)) {
-            System.out.println(">>> [Router] 追问型问题放行: " + question);
+            System.out.println("[路由] 追问放行 → LLM: " + question);
             return null;
         }
         long t0 = System.currentTimeMillis();
         String result = fixedQueryTools.query(question);
         if (result == null || result.startsWith(MISS_PREFIX)) {
+            System.out.println("[路由] 固定查询未命中 → LLM: " + question);
             return null;
         }
         hit.incrementAndGet();
         hitMillis.addAndGet(System.currentTimeMillis() - t0);
-        System.out.println(">>> [Router] 硬路由命中: " + question + "（耗时 " + (System.currentTimeMillis() - t0) + "ms）");
+        System.out.println("[路由] 硬路由命中: " + question + "（" + (System.currentTimeMillis() - t0) + "ms）");
         return result;
     }
 

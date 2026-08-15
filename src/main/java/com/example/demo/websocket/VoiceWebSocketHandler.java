@@ -30,7 +30,7 @@ public class VoiceWebSocketHandler extends BinaryWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        System.out.println(">>> [WS] 语音连接建立: " + session.getId());
+        System.out.println("[WS] 语音连接");
         // 不立即 startStreaming，等第一帧音频到达（懒启动）
     }
 

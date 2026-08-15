@@ -94,7 +94,7 @@ mvn spring-boot:run
 ChatController ──> QueryRouter(硬路由，正则)
    ├─ 命中 → 直接返回数据（0 次 LLM 调用）
    └─ miss → ConsultantService(AiService)
-              │ @SystemMessage 提示词（工具0~7 + 分类A-I + 对局引导）
+              │ @SystemMessage 提示词（工具0~7 + 分类A-H + 对局引导）
               │ ChatMemory(JsonFile 持久化, 一局一个文件)
               ▼
          qwen3.8-max（流式 + 工具调用, enable_thinking:false）
@@ -115,9 +115,9 @@ ChatController ──> QueryRouter(硬路由，正则)
 | `saveHex()` | 记录本局已选海克斯（Redis 持久化） |
 | `getSchema()` | 数据库全部表结构与查询参数说明 |
 | `searchName()` | 名称→id 映射（称号/官方中文名/英文名） |
-| `queryDb()` | 参数化动态查询（MyBatis 动态 SQL，6 表白名单，LLM 填参数不写 SQL） |
+| `queryDb()` | 参数化动态查询（MyBatis 动态 SQL，5 表白名单，LLM 填参数不写 SQL） |
 | `getSynergy()` | 机制联动分析（英雄技能 × 海克斯/装备效果链式推理） |
-| `tryFixedQuery()` | 固定查询：英雄胜率/海克斯排名/出装/玩法/三连组合/排行榜 |
+| `tryFixedQuery()` | 固定查询：英雄胜率/海克斯排名/出装/玩法/排行榜，按问题类型裁剪返回 |
 | `queryKnowledge()` | 语义检索：按效果/机制描述找装备或海克斯（Redis 8 Vector Set） |
 | `updateKnowledge()` | 更新知识库：全量同步数据 + 重建向量索引（语音"更新知识库"触发） |
 
@@ -128,8 +128,8 @@ ChatController ──> QueryRouter(硬路由，正则)
 
 ### 回答路由
 
-1. **硬路由 `QueryRouter`**（代码层）：正则识别高频固定查询（英雄排行/数据包/"英雄有了X"组合），命中直接返回数据，0 次 LLM 调用。
-2. **LLM 工具链**（硬路由 miss 后）：提示词按问题类型 A-I 分流——
+1. **硬路由 `QueryRouter`**（代码层）：正则识别高频固定查询（英雄排行/数据包/"英雄有了X"组合），**按问题类型裁剪**（问出装只返回出装，问海克斯只返回海克斯），命中直接返回数据，0 次 LLM 调用。
+2. **LLM 工具链**（硬路由 miss 后）：提示词按问题类型 A-H 分流——
    - 数据类：`tryFixedQuery` 固定查询 → 未命中走 `queryDb` 参数化查询 / `getSynergy` 机制联动
    - 描述类：`queryKnowledge` 语义检索（RAG），**与动态 SQL 并行车道**（`queryDb` 的 keyword 只匹配名字，按效果/机制描述找装备/海克斯必须走 RAG）
    - 更新类：`updateKnowledge` 触发全量同步 + 重建向量索引（更新期间 `/chat` 拦截所有回答）

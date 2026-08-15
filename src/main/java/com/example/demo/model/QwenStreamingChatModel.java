@@ -59,9 +59,6 @@ public class QwenStreamingChatModel implements StreamingChatModel {
         for (ToolExecutionRequest req : ai.toolExecutionRequests()) {
             String clean = sanitize(req.arguments());
             if (!clean.equals(req.arguments())) changed = true;
-            if (!clean.equals(req.arguments())) {
-                System.out.println(">>> [ToolFix] 原始 arguments=[" + req.arguments() + "] 清洗后=[" + clean + "]");
-            }
             fixed.add(ToolExecutionRequest.builder()
                     .id(req.id())
                     .name(req.name())

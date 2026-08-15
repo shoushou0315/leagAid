@@ -40,7 +40,7 @@ public class QwenAsrService {
         this.model = model;
         this.wsUrl = wsUrl;
         this.vocabulary = buildVocabulary(heroMapper);
-        System.out.println(">>> [ASR] 加载热词 " + vocabulary.size() + " 个");
+        System.out.println("[ASR] 热词 " + vocabulary.size() + " 个");
     }
 
     /** 从数据库加载全量热词：英雄官方名 + 海克斯 + 装备 */
@@ -158,7 +158,6 @@ public class QwenAsrService {
             }
             @Override
             public void onComplete() {
-                System.out.println(">>> [ASR] 流式识别完成");
             }
             @Override
             public void onError(Exception e) {

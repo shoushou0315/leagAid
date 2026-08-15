@@ -2,14 +2,16 @@
 <html>
 <head><meta charset="UTF-8"><title>海克斯大乱斗助手</title>
 <style>
-body{font-family:sans-serif;max-width:900px;margin:20px auto;padding:10px}
-.container{display:flex;gap:15px}
-#sidebar{width:220px;flex-shrink:0}
-#sessionList{max-height:500px;overflow-y:auto;border:1px solid #ccc;border-radius:6px;padding:8px;background:#fafafa;font-size:13px}
+html,body{height:100%;margin:0;font-family:sans-serif;padding:10px;box-sizing:border-box}
+body{max-width:900px;margin:0 auto;display:flex;flex-direction:column}
+h3{margin:4px 0 10px}
+.container{display:flex;gap:15px;flex:1;min-height:0}
+#sidebar{width:220px;flex-shrink:0;display:flex;flex-direction:column;min-height:0}
+#sessionList{flex:1;overflow-y:auto;border:1px solid #ccc;border-radius:6px;padding:8px;background:#fafafa;font-size:13px}
 .session-item{padding:6px 8px;cursor:pointer;border-bottom:1px solid #eee;border-radius:4px}
 .session-item:hover{background:#eef}
-#main{flex:1}
-#chatBox{height:400px;overflow-y:auto;border:1px solid #ccc;padding:10px;margin-bottom:10px;background:#fafafa}
+#main{flex:1;display:flex;flex-direction:column;min-height:0}
+#chatBox{flex:1;overflow-y:auto;border:1px solid #ccc;padding:10px;margin-bottom:10px;background:#fafafa}
 .msg{margin:5px 0;padding:8px;border-radius:8px;max-width:80%;white-space:pre-wrap}
 .user{background:#dcf8c6;margin-left:auto;text-align:right}
 .ai{background:#eee}

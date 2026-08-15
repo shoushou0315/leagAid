@@ -83,7 +83,7 @@ public class DatabaseTools {
     /** 名称解析：中文名/称号/英文名 → id */
     @Tool("按名称模糊搜索英雄/海克斯/装备（英雄支持称号/官方中文名/英文名），返回 [类型, 名称, id] 列表")
     public String searchName(@P("名称关键词，如：薇恩、泰隆、刀锋之影") String keyword) {
-        System.out.println(">>> [Tool] searchName 调用: keyword=" + keyword);
+        System.out.println("[工具] searchName " + keyword);
         try {
             StringBuilder sb = new StringBuilder();
             String like = "%" + keyword + "%";
@@ -120,8 +120,7 @@ public class DatabaseTools {
                           @P("稀有度/分类筛选：白银/黄金/棱彩 或 T1~T5，可为空") String tier,
                           @P("排序方向：asc/desc，可为空") String order,
                           @P("返回条数，默认10，上限300；要'输出全部列表'时传300") int limit) {
-        System.out.println(">>> [Tool] queryDb 调用: table=" + table + " heroId=" + heroId + " keyword=" + keyword
-                + " tier=" + tier + " order=" + order + " limit=" + limit);
+        System.out.println("[工具] queryDb " + table + (heroId != null ? " h" + heroId : "") + (keyword != null ? " k=" + keyword : "") + " n=" + limit);
         try {
             if (table == null || !ALLOWED_TABLES.contains(table)) {
                 return "错误：table 必须是 heroes/augments/items/hero_augment_rank/hero_item_build 之一。";
@@ -152,7 +151,7 @@ public class DatabaseTools {
     @Tool("分析某个英雄与一个或多个装备/海克斯的机制联动，返回英雄技能档案+每个装备/海克斯的完整效果描述并列列出，并引导做链式推理。当玩家问'某英雄选某海克斯/出某装备好不好/能不能配合/邪修玩法'时使用，找出'技能→海克斯→装备'的完整触发链")
     public String getSynergy(@P("英雄名，如：莉莉娅") String heroName,
                              @P("装备名或海克斯名，可传多个用逗号分隔，如：心之钢,虚幻武器") String itemOrAugmentNames) {
-        System.out.println(">>> [Tool] getSynergy 调用: hero=" + heroName + ", items=" + itemOrAugmentNames);
+        System.out.println("[工具] getSynergy " + heroName + " x " + itemOrAugmentNames);
         StringBuilder sb = new StringBuilder();
         try {
             // 英雄档案
@@ -171,7 +170,7 @@ public class DatabaseTools {
             sb.append("定位: ").append(profile.get("tags")).append("\n");
             sb.append("被动: ").append(profile.get("passive")).append("\n");
             sb.append("技能: ").append(profile.get("spells")).append("\n");
-            System.out.println(">>> [Tool] getSynergy 已返回英雄档案，技能内容长度=" + String.valueOf(profile.get("spells")).length());
+            System.out.println("[工具] getSynergy 技能档案 len=" + String.valueOf(profile.get("spells")).length());
 
             // 逐个解析名字（逗号分隔），并列列出每个的描述
             String[] names = itemOrAugmentNames.split("[,，]");

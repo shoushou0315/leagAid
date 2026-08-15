@@ -51,14 +51,13 @@ public class DynamicContentRetriever {
         this.vectorStore = new RedisVectorStore(redisHost, redisPort, redisKey);
 
         if (vectorStore.hasData()) {
-            System.out.println(">>> [RAG] Redis 已有向量数据，直接就绪");
+            System.out.println("[RAG] 就绪（已有向量数据）");
             vectorReady = true;
         } else if (heroMapper.countAugments() == 0 || heroMapper.countHeroProfiles() == 0) {
-            System.out.println(">>> [RAG] 数据不完整，等待后台同步完成后构建索引...");
+            System.out.println("[RAG] 数据不完整，后台同步");
             dataService.syncAsync();
         } else {
-            // 异步构建向量索引，避免阻塞 Spring 上下文（网页立即可用）
-            System.out.println(">>> [RAG] 后台构建向量索引...");
+            System.out.println("[RAG] 后台构建索引");
             new Thread(this::buildVectorIndexSync, "vector-builder").start();
         }
         // 数据同步完成后自动重建索引
@@ -76,13 +75,13 @@ public class DynamicContentRetriever {
 
                 // 海克斯描述
                 for (Map<String, Object> a : heroMapper.findAllAugments()) {
-                    if (myGeneration != buildGeneration) { System.out.println(">>> [RAG] 构建已中止（收到新刷新）"); return; }
+                    if (myGeneration != buildGeneration) { System.out.println("[RAG] 中止（有刷新）"); return; }
                     String text = a.get("name") + "（" + a.get("tier_name") + "海克斯）：" + a.get("description");
                     segments.add(new String[]{text, "augment", String.valueOf(a.get("id"))});
                 }
                 // 装备描述
                 for (Map<String, Object> it : heroMapper.findAllItems()) {
-                    if (myGeneration != buildGeneration) { System.out.println(">>> [RAG] 构建已中止（收到新刷新）"); return; }
+                    if (myGeneration != buildGeneration) { System.out.println("[RAG] 中止（有刷新）"); return; }
                     String name = String.valueOf(it.get("name"));
                     if (name.isEmpty()) continue;
                     String plaintext = it.get("plaintext") == null ? "" : String.valueOf(it.get("plaintext"));
@@ -92,7 +91,7 @@ public class DynamicContentRetriever {
                 }
                 // 英雄档案（玩法/技能/定位）
                 for (Map<String, Object> p : heroMapper.findAllHeroProfiles()) {
-                    if (myGeneration != buildGeneration) { System.out.println(">>> [RAG] 构建已中止（收到新刷新）"); return; }
+                    if (myGeneration != buildGeneration) { System.out.println("[RAG] 中止（有刷新）"); return; }
                     StringBuilder text = new StringBuilder();
                     text.append("英雄 ").append(p.get("hero_id")).append(" 玩法档案");
                     String title = p.get("title") == null ? "" : String.valueOf(p.get("title"));
@@ -113,7 +112,7 @@ public class DynamicContentRetriever {
                 }
 
                 if (segments.isEmpty()) {
-                    System.out.println(">>> [RAG] 无可向量化内容");
+                    System.out.println("[RAG] 无可向量化内容");
                     return;
                 }
 
@@ -121,7 +120,7 @@ public class DynamicContentRetriever {
                 // embedding + 写入（分批 10，Redis 写入远快于 JVector 图构建）
                 int done = 0;
                 for (int i = 0; i < segments.size(); i += 10) {
-                    if (myGeneration != buildGeneration) { System.out.println(">>> [RAG] 构建已中止（收到新刷新）"); return; }
+                    if (myGeneration != buildGeneration) { System.out.println("[RAG] 中止（有刷新）"); return; }
                     List<String> batchTexts = new ArrayList<>();
                     for (int j = i; j < Math.min(i + 10, segments.size()); j++) {
                         batchTexts.add(segments.get(j)[0]);
@@ -133,15 +132,11 @@ public class DynamicContentRetriever {
                         vectorStore.add(seg[2] + ":" + seg[1] + ":" + i + ":" + j, vec, seg[1], seg[2], seg[0]);
                     }
                     done += emb.size();
-                    if (done % 100 == 0 || done == segments.size()) {
-                        System.out.println(">>> [RAG] 已写入 " + done + "/" + segments.size());
-                    }
                 }
                 vectorReady = true;
-                System.out.println(">>> [RAG] 向量索引就绪: " + segments.size() + " 条（海克斯" + heroMapper.countAugments()
-                        + " + 装备" + heroMapper.countItems() + " + 英雄档案" + heroMapper.countHeroProfiles() + "），Redis key=" + "vec:rag");
+                System.out.println("[RAG] 索引就绪 " + segments.size() + " 条");
             } catch (Exception e) {
-                System.out.println(">>> [RAG] 向量索引构建失败: " + e.getMessage());
+                System.out.println("[RAG] 构建失败: " + e.getMessage());
                 e.printStackTrace();
             }
         }
@@ -154,7 +149,7 @@ public class DynamicContentRetriever {
      */
     @Tool("语义检索知识库：按效果/机制描述查找海克斯、装备、英雄玩法。返回匹配内容列表。仅当问题用'描述效果、找不到确切名称'时才调用；指名道姓/要数据的问题不要用")
     public String queryKnowledge(@P("用自然语言描述想找的内容，如：克制护盾的装备") String question) {
-        System.out.println(">>> [Tool] queryKnowledge 调用: " + question);
+        System.out.println("[工具] queryKnowledge: " + question);
         if (!vectorReady) {
             return "知识库尚未就绪，请稍后重试";
         }
@@ -184,7 +179,7 @@ public class DynamicContentRetriever {
     /** 语音触发知识库更新工具：用户说"更新知识库/刷新数据"时调用 */
     @Tool("更新知识库：触发全量数据同步并重建向量索引。当用户说'更新知识库/刷新数据/更新数据/重新学习'等要求更新数据时调用本工具")
     public String updateKnowledge(@P("无需参数") String unused) {
-        System.out.println(">>> [Tool] updateKnowledge 调用");
+        System.out.println("[工具] updateKnowledge");
         refresh();
         return "已触发知识库更新：正在全量同步数据并重建向量索引。更新完成后语义检索（queryKnowledge）自动生效，无需重启。";
     }
