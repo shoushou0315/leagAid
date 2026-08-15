@@ -20,4 +20,6 @@ public class Hero {
     private String version;       // 版本 16.15
     private String date;          // 数据日期
     private Integer winRank;      // 总排名
+
+    private String imageUrl;      // 头像 URL（cdn.dtodo.cn，champion-icons/{id}.png）
 }

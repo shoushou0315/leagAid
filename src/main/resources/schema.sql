@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS heroes (
     pick_rate DOUBLE,
     version VARCHAR(255),
     date VARCHAR(255),
-    win_rank INT
+    win_rank INT,
+    image_url VARCHAR(500)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS augments (
@@ -24,7 +25,8 @@ CREATE TABLE IF NOT EXISTS augments (
     tier_name VARCHAR(255),
     description VARCHAR(4000),
     tooltip VARCHAR(4000),
-    enabled BIT
+    enabled BIT,
+    image_url VARCHAR(500)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS hero_augment_rank (
@@ -41,18 +43,6 @@ CREATE TABLE IF NOT EXISTS hero_augment_rank (
     UNIQUE KEY uk_hero_augment (hero_id, augment_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS augment_combos (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    hero_id INT,
-    augment_ids VARCHAR(255),
-    win_rate DOUBLE,
-    pick_rate DOUBLE,
-    num_games BIGINT,
-    num_win_games BIGINT,
-    win_rank INT,
-    UNIQUE KEY uk_hero_combo (hero_id, augment_ids)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
 CREATE TABLE IF NOT EXISTS items (
     id INT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -64,7 +54,8 @@ CREATE TABLE IF NOT EXISTS items (
     tags VARCHAR(1000),
     from_ids VARCHAR(500),
     into_ids VARCHAR(500),
-    version VARCHAR(255)
+    version VARCHAR(255),
+    image_url VARCHAR(500)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS hero_item_build (
@@ -77,6 +68,15 @@ CREATE TABLE IF NOT EXISTS hero_item_build (
     win_rate DOUBLE,
     pick_rate DOUBLE,
     UNIQUE KEY uk_build (hero_id, build_index, group_index, slot)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS hero_item_ext (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    hero_id INT,
+    item_id INT,
+    ext_type VARCHAR(20),          -- situational=情境装备 / recommended=推荐装备
+    slot INT,
+    UNIQUE KEY uk_ext (hero_id, ext_type, slot)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS hero_profiles (

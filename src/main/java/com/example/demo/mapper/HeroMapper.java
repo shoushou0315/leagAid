@@ -29,14 +29,14 @@ public interface HeroMapper {
     /** 该英雄出装方案 */
     List<Map<String, Object>> getBuilds(@Param("heroId") Integer heroId);
 
+    /** 该英雄扩展装备（情境/推荐） */
+    List<Map<String, Object>> getHeroExt(@Param("heroId") Integer heroId);
+
     /** 该英雄玩法档案 */
     Map<String, Object> getHeroProfile(@Param("heroId") Integer heroId);
 
     /** 英雄排行榜 TOP N */
     List<Map<String, Object>> getTopHeroes(@Param("limit") int limit);
-
-    /** 三连组合 TOP N */
-    List<Map<String, Object>> getCombos(@Param("heroId") Integer heroId, @Param("limit") int limit);
 
     /** 全量海克斯（向量索引构建用） */
     List<Map<String, Object>> findAllAugments();
@@ -68,9 +68,6 @@ public interface HeroMapper {
                                            @Param("order") String order,
                                            @Param("limit") int limit);
 
-    /** 按 id 批量查海克斯名（三连组合 id→名字 映射用） */
-    List<Map<String, Object>> findAugmentNamesByIds(@Param("ids") List<Integer> ids);
-
     /** 全量英雄名（语音热词用：称号+官方名+英文名） */
     List<String> findAllHeroNames();
 
@@ -79,4 +76,13 @@ public interface HeroMapper {
 
     /** 全量装备名（语音热词用） */
     List<String> findAllItemNames();
+
+    /** 全量英雄（含图片，前端名称映射用） */
+    List<Map<String, Object>> findAllHeroesWithImage();
+
+    /** 全量海克斯（含图片，前端名称映射用） */
+    List<Map<String, Object>> findAllAugmentsWithImage();
+
+    /** 全量装备（含图片，前端名称映射用） */
+    List<Map<String, Object>> findAllItemsWithImage();
 }

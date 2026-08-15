@@ -50,6 +50,11 @@ public class AramggDataService {
     @org.springframework.beans.factory.annotation.Value("${aramgg.champion-details-dir}")
     private String championDetailsDir;
 
+    /** 图片 CDN 前缀 */
+    private static final String AUGMENT_ICON_BASE = "https://cdn.dtodo.cn/hextech/augment-icons/";
+    private static final String CHAMPION_ICON_BASE = "https://cdn.dtodo.cn/hextech/champion-icons/";
+    private static final String ITEM_ICON_BASE = "https://ddragon.leagueoflegends.com/cdn/";
+
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile Runnable onSyncComplete;
 
@@ -78,6 +83,7 @@ public class AramggDataService {
             syncItems();
             syncChampionDetails();
             syncHeroProfiles();
+            // cleanupItems();   // 暂停：保留所有装备，先人工分析同名实例规律
             log.info("[数据] ====== aramgg 数据同步完成 ======");
             Runnable cb = onSyncComplete;
             if (cb != null) {
@@ -106,6 +112,11 @@ public class AramggDataService {
             a.setDescription(cleanHtml(node.path("description").asText("")));
             a.setTooltip(cleanHtml(node.path("tooltip").asText("")));
             a.setEnabled(true);
+            // 海克斯图标：iconLarge 文件名转小写拼 CDN URL（_small 是黑白小图，_large 才是彩色）
+            String icon = node.path("iconLarge").asText("");
+            if (!icon.isEmpty()) {
+                a.setImageUrl(AUGMENT_ICON_BASE + icon.toLowerCase());
+            }
             list.add(a);
         });
         dataWriteMapper.deleteAllAugments();
@@ -133,6 +144,8 @@ public class AramggDataService {
             h.setVersion(n.path("version").asText(""));
             h.setDate(n.path("date").asText(""));
             h.setWinRank(n.path("rank").asInt(0));
+            // 英雄头像：CDN champion-icons/{id}.png
+            h.setImageUrl(CHAMPION_ICON_BASE + id + ".png");
             list.add(h);
         }
         dataWriteMapper.deleteAllHeroes();
@@ -270,6 +283,8 @@ public class AramggDataService {
                 it.setFromIds(joinIds(n.path("from")));
                 it.setIntoIds(joinIds(n.path("into")));
                 it.setVersion(ver);
+                // 装备图标：ddragon item/{id}.png（版本号动态）
+                it.setImageUrl(ITEM_ICON_BASE + ver + "/img/item/" + e.getKey() + ".png");
                 list.add(it);
             });
             dataWriteMapper.deleteAllItems();
@@ -288,6 +303,21 @@ public class AramggDataService {
             sb.append(n.asText());
         }
         return sb.toString();
+    }
+
+    /**
+     * 装备清洗：删除 DDragon 的 22/77 前缀重复实例（非大乱斗版本残留）。
+     * 22 系列：无合成路径的残留版；77 系列：老版图标重复。主 id（其余）全部保留。
+     * 验证：build/ext 引用的 111 个装备全部是主 id，主 id 装备（含智慧末刃/合成件）需保留。
+     */
+    private void cleanupItems() {
+        try {
+            // 删 22/77 开头 id（用 SQL：id LIKE '22%' OR id LIKE '77%'）
+            int deleted = dataWriteMapper.deleteItemsByPrefix("22%", "77%");
+            log.info("[数据] 清洗: 删除 22/77 前缀残留装备 {} 个", deleted);
+        } catch (Exception e) {
+            log.warn("[数据] 装备清洗失败: {}", e.getMessage());
+        }
     }
 
     // ===== 3. 各英雄海克斯排名（并行）=====
@@ -323,34 +353,6 @@ public class AramggDataService {
                             ranks.add(r);
                         });
                         dataWriteMapper.batchInsertHeroAugmentRanks(ranks);
-
-                        // 2. 推荐海克斯三连组合
-                        JsonNode trios = inner.path("augment_trios");
-                        dataWriteMapper.deleteHeroCombos(hero.getId());
-                        if (trios.isObject()) {
-                            List<com.example.demo.entity.AugmentCombo> combos = new ArrayList<>();
-                            java.util.List<java.util.Map.Entry<String, JsonNode>> entries = new ArrayList<>();
-                            trios.fields().forEachRemaining(entries::add);
-                            entries.sort((a, b) -> Double.compare(
-                                    parseNullableDouble(b.getValue().path("win_rate")) == null ? 0 : parseNullableDouble(b.getValue().path("win_rate")),
-                                    parseNullableDouble(a.getValue().path("win_rate")) == null ? 0 : parseNullableDouble(a.getValue().path("win_rate"))));
-                            int rankIdx = 0;
-                            for (java.util.Map.Entry<String, JsonNode> e : entries) {
-                                JsonNode v = e.getValue();
-                                com.example.demo.entity.AugmentCombo c = new com.example.demo.entity.AugmentCombo();
-                                c.setHeroId(hero.getId());
-                                c.setAugmentIds(e.getKey());
-                                c.setWinRate(parseNullableDouble(v.path("win_rate")));
-                                c.setPickRate(parseNullableDouble(v.path("pick_rate")));
-                                c.setNumGames(parseNullableLong(v.path("num_games")));
-                                c.setNumWinGames(parseNullableLong(v.path("num_win_games")));
-                                c.setWinRank(++rankIdx);
-                                combos.add(c);
-                            }
-                            if (!combos.isEmpty()) {
-                                dataWriteMapper.batchInsertHeroCombos(combos);
-                            }
-                        }
                     } catch (Exception e) {
                         log.warn("[数据] 英雄 {} 排名同步失败: {}", hero.getId(), e.getMessage());
                     }
@@ -370,7 +372,7 @@ public class AramggDataService {
         }
         pool.shutdown();
         try { latch.await(15, java.util.concurrent.TimeUnit.MINUTES); } catch (InterruptedException e) { }
-        log.info("[数据] 英雄排名+组合+build 完成");
+        log.info("[数据] 英雄排名+build 完成");
     }
 
     // ===== 装备 build 方案（解析 aramgg 英雄页 HTML）=====
@@ -383,28 +385,44 @@ public class AramggDataService {
                     .get();
             dataWriteMapper.deleteHeroBuilds(heroId);
             List<com.example.demo.entity.HeroItemBuild> builds = new ArrayList<>();
-            for (org.jsoup.nodes.Element panel : doc.select("[data-build-panel]")) {
-                int buildIndex = Integer.parseInt(panel.attr("data-build-panel"));
-                int groupIndex = 0;
-                for (org.jsoup.nodes.Element card : panel.select("span[data-slot=badge]")) {
-                    groupIndex++;
-                    Element container = card.parent().parent();
-                    if (container == null) continue;
-                    // 提取胜率/选取率（文本里含 胜率: X% 选取率: Y%）
-                    String blockText = container.text();
+
+            // 页面结构（SSR）：3 个重复的 [data-build-content]，每个内含「核心装备」+「推荐装」两块
+            // 核心装备块：<span data-slot="badge">#N</span> + 装备 img(item-icons/{id}.png) + 胜率
+            // 推荐装块无 #N badge，跳过。3 个 section 内容重复，只取第一个，避免唯一键冲突
+            List<org.jsoup.nodes.Element> panels = doc.select("[data-build-content]");
+            if (panels.isEmpty()) { log.warn("[数据] 英雄 {} 页面无 build-content", heroId); return; }
+            org.jsoup.nodes.Element panel = panels.get(0);   // 只取第一个重复 section
+            for (org.jsoup.nodes.Element badge : panel.select("span[data-slot=badge]")) {
+                String badgeText = badge.text().trim();
+                if (!badgeText.matches("#\\d+")) continue;   // 只认 #N 方案索引（核心装备有，推荐装没有）
+                int buildIndex = Integer.parseInt(badgeText.substring(1));
+
+                    // 方案块：从 badge 往上找「同时含 item-icons 和 胜率:」的最近祖先（该方案完整块）
+                    Element block = badge.parent();
+                    for (int up = 0; up < 6 && block != null; up++) {
+                        boolean hasIcons = !block.select("img[src*='item-icons']").isEmpty();
+                        boolean hasWr = block.text().contains("胜率:");
+                        if (hasIcons && hasWr) break;
+                        block = block.parent();
+                    }
+                    if (block == null) continue;
+
+                    // 胜率/选取率（块内文本）
+                    String blockText = block.text();
                     java.util.regex.Matcher wm = java.util.regex.Pattern.compile("胜率: ([\\d.]+)%").matcher(blockText);
                     java.util.regex.Matcher pm = java.util.regex.Pattern.compile("选取率: ([\\d.]+)%").matcher(blockText);
                     double wr = wm.find() ? Double.parseDouble(wm.group(1)) / 100.0 : 0;
                     double pr = pm.find() ? Double.parseDouble(pm.group(1)) / 100.0 : 0;
-                    // 该块的3件装备（img src 含 item-icons/{id}.png）
+
+                    // 该块的装备（img src 含 item-icons/{id}.png）
                     int slot = 1;
-                    for (org.jsoup.nodes.Element img : container.select("img[src*='item-icons']")) {
+                    for (org.jsoup.nodes.Element img : block.select("img[src*='item-icons']")) {
                         java.util.regex.Matcher idm = java.util.regex.Pattern.compile("item-icons/(\\d+)\\.png").matcher(img.attr("src"));
                         if (!idm.find()) continue;
                         com.example.demo.entity.HeroItemBuild b = new com.example.demo.entity.HeroItemBuild();
                         b.setHeroId(heroId);
                         b.setBuildIndex(buildIndex);
-                        b.setGroupIndex(groupIndex);
+                        b.setGroupIndex(1);
                         b.setSlot(slot++);
                         b.setItemId(Integer.parseInt(idm.group(1)));
                         b.setWinRate(wr);
@@ -412,9 +430,41 @@ public class AramggDataService {
                         builds.add(b);
                     }
                 }
-            }
             if (!builds.isEmpty()) {
                 dataWriteMapper.batchInsertHeroBuilds(builds);
+            } else {
+                log.warn("[数据] 英雄 {} 出装方案为空（页面无 build-content）", heroId);
+            }
+
+            // ===== 扩展装备：情境装备(前12件) + 推荐装备(5件)，无序列表无胜率 =====
+            try {
+                List<com.example.demo.entity.HeroItemExt> exts = new ArrayList<>();
+                int extTypeIdx = 0;
+                for (org.jsoup.nodes.Element h3 : panel.select("h3")) {
+                    String title = h3.text().trim();
+                    String type = null;
+                    if (title.contains("情境装备")) type = "situational";
+                    else if (title.contains("推荐装备")) type = "recommended";
+                    if (type == null) continue;
+                    Element section = h3.parent();
+                    int slot = 1;
+                    for (org.jsoup.nodes.Element img : section.select("img[src*='item-icons']")) {
+                        java.util.regex.Matcher idm = java.util.regex.Pattern.compile("item-icons/(\\d+)\\.png").matcher(img.attr("src"));
+                        if (!idm.find()) continue;
+                        com.example.demo.entity.HeroItemExt ext = new com.example.demo.entity.HeroItemExt();
+                        ext.setHeroId(heroId);
+                        ext.setItemId(Integer.parseInt(idm.group(1)));
+                        ext.setExtType(type);
+                        ext.setSlot(slot++);
+                        exts.add(ext);
+                    }
+                }
+                if (!exts.isEmpty()) {
+                    dataWriteMapper.deleteHeroExt(heroId);
+                    dataWriteMapper.batchInsertHeroExt(exts);
+                }
+            } catch (Exception e) {
+                log.warn("[数据] 英雄 {} 扩展装备解析失败: {}", heroId, e.getMessage());
             }
         } catch (Exception e) {
             log.warn("[数据] 英雄 {} 装备build解析失败: {}", heroId, e.getMessage());

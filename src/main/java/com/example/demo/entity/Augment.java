@@ -20,4 +20,6 @@ public class Augment {
     private String tooltip;       // tooltip 详细效果
 
     private Boolean enabled;
+
+    private String imageUrl;      // 图标 URL（cdn.dtodo.cn，iconSmall 转小写）
 }

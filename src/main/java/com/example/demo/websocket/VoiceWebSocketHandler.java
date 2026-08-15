@@ -15,6 +15,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *   - 发二进制帧（PCM 16kHz 单声道 16bit）→ 识别中间结果实时推回
  *   - 发文本 "end" → 结束识别，推最终结果
  *   - 发文本 "cancel" → 取消
+ *
+ * 懒启动：收到第一帧音频才 startStreaming（ASR 会话），避免会话空转/首帧丢失。
+ * （之前连接建立即 startStreaming，首次音频可能在 ASR 未就绪时被丢帧，导致第一次说话识别为空）
  */
 public class VoiceWebSocketHandler extends BinaryWebSocketHandler {
 
@@ -28,25 +31,27 @@ public class VoiceWebSocketHandler extends BinaryWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         System.out.println(">>> [WS] 语音连接建立: " + session.getId());
-        QwenAsrService.AsrStream stream = qwenAsrService.startStreaming(
-                intermediate -> sendText(session, "{\"intermediate\":\"" + jsonEscape(intermediate) + "\"}"),
-                finalText -> {
-                    sendText(session, "{\"final\":\"" + jsonEscape(finalText) + "\"}");
-                    closeSession(session);
-                },
-                err -> {
-                    sendText(session, "{\"error\":\"" + jsonEscape(err.getMessage()) + "\"}");
-                    closeSession(session);
-                });
-        streams.put(session.getId(), stream);
+        // 不立即 startStreaming，等第一帧音频到达（懒启动）
     }
 
     @Override
     protected void handleBinaryMessage(WebSocketSession session, BinaryMessage message) throws Exception {
         QwenAsrService.AsrStream stream = streams.get(session.getId());
-        if (stream != null) {
-            stream.sendFrame(message.getPayload().array());
+        if (stream == null) {
+            // 第一帧音频：此刻才启动 ASR 会话，确保首帧被正确接收
+            stream = qwenAsrService.startStreaming(
+                    intermediate -> sendText(session, "{\"intermediate\":\"" + jsonEscape(intermediate) + "\"}"),
+                    finalText -> {
+                        sendText(session, "{\"final\":\"" + jsonEscape(finalText) + "\"}");
+                        closeSession(session);
+                    },
+                    err -> {
+                        sendText(session, "{\"error\":\"" + jsonEscape(err.getMessage()) + "\"}");
+                        closeSession(session);
+                    });
+            streams.put(session.getId(), stream);
         }
+        stream.sendFrame(message.getPayload().array());
     }
 
     @Override

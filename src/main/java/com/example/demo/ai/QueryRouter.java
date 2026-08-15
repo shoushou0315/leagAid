@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 路由优先级：
  *   1. 排行榜/强查询 → getTopHeroes
  *   2. "英雄有了/拿到 X" 组合 → tryHeroAugmentCombo
- *   3. 英雄数据包（胜率/海克斯/出装/组合/玩法）→ 完整包
+ *   3. 英雄数据包（胜率/海克斯/出装/玩法）→ 完整包
  *   4. miss → 返回 null，走 LLM 软路由兜底
  *
  * 与 FixedQueryTools 共用 query() 逻辑，保证 Tool 与硬路由行为一致。

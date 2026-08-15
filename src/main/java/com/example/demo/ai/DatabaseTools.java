@@ -22,7 +22,7 @@ import java.util.Map;
 public class DatabaseTools {
 
     private static final java.util.Set<String> ALLOWED_TABLES = java.util.Set.of(
-            "heroes", "augments", "items", "hero_augment_rank", "hero_item_build", "augment_combos");
+            "heroes", "augments", "items", "hero_augment_rank", "hero_item_build");
 
     private final JdbcTemplate jdbc;
     private final HeroMapper heroMapper;
@@ -36,7 +36,7 @@ public class DatabaseTools {
     @Tool("返回数据库全部表结构、列名、类型、含义和查询参数说明，供决定 queryDb 查询参数使用")
     public String getSchema() {
         return """
-                数据库共 6 张表，全部与海克斯大乱斗相关。查询请用 queryDb 填参数，不要写 SQL：
+                数据库共 5 张表，全部与海克斯大乱斗相关。查询请用 queryDb 填参数，不要写 SQL：
 
                 【表1 heroes】英雄总榜（173个）
                   id(INT PK), name(VARCHAR 称号,如"刀锋之影"), official_name(VARCHAR 官方中文名,如"泰隆"), en_name(英文名), tier(如T1/T2),
@@ -51,20 +51,16 @@ public class DatabaseTools {
                   hero_id(FK→heroes.id), augment_id(FK→augments.id),
                   tier, win_rank(排名越小越强), total(总数145), win_rate, pick_rate, num_games, num_win_games
 
-                【表4 augment_combos】英雄推荐海克斯三连组合
-                  hero_id, augment_ids(VARCHAR 形如"1077:1225:1336" 三个海克斯id冒号分隔),
-                  win_rate, pick_rate, win_rank(组合排名)
-
-                【表5 items】装备（694件）
+                【表4 items】装备（大乱斗可用装备，含合成小件）
                   id(INT PK), name(中文名), en_name, description, plaintext,
                   total_price, base_price, tags(分类逗号分隔), from_ids(合成来源), into_ids(可合成), version
 
-                【表6 hero_item_build】英雄×装备推荐方案（每英雄3套×3组×3件）
+                【表5 hero_item_build】英雄×装备推荐方案（每英雄3套×3组×3件）
                   hero_id, build_index(方案0-2), group_index(组1-3), slot(槽位1-3),
                   item_id(FK→items.id), win_rate(该方案胜率), pick_rate
 
                 queryDb 可用参数：
-                  table: heroes / augments / items / hero_augment_rank / hero_item_build / augment_combos
+                  table: heroes / augments / items / hero_augment_rank / hero_item_build
                   heroId: 英雄数字id（先 searchName 拿到，可为空）
                   keyword: 名称关键词（只匹配 英雄名/海克斯名/装备名，不匹配效果描述！）
                   tier: 稀有度筛选（白银/黄金/棱彩 或 T1/T2/T3/T4/T5）
@@ -75,7 +71,6 @@ public class DatabaseTools {
                   - 查某英雄胜率：table=heroes + heroId（或 keyword=英雄名），即可命中该英雄一条数据
                   - 查某英雄的海克斯：table=hero_augment_rank + heroId
                   - 查某英雄出装：table=hero_item_build + heroId
-                  - 查某英雄三连组合：table=augment_combos + heroId
 
                 重要分工：
                   - 按名字查（"提莫有什么海克斯"）→ queryDb + heroId/keyword
@@ -118,8 +113,8 @@ public class DatabaseTools {
     }
 
     /** 参数化动态查询：LLM 填参数，不写 SQL。MyBatis 动态 SQL 生成，白名单 + 参数化，永不报语法错误 */
-    @Tool("参数化查询数据库。填 table/heroId/keyword/tier/order/limit 参数即可，无需写SQL。表有：heroes英雄榜、augments海克斯、items装备、hero_augment_rank英雄海克斯排名、hero_item_build出装、augment_combos三连组合。注意：keyword 只匹配名字，按效果描述找装备/海克斯必须用 queryKnowledge。查'提莫有什么海克斯'用 hero_augment_rank+heroId；查'提莫胜率'用 heroes+heroId；查'黄金海克斯'用 augments+tier='黄金'")
-    public String queryDb(@P("表名，可选：heroes/augments/items/hero_augment_rank/hero_item_build/augment_combos") String table,
+    @Tool("参数化查询数据库。填 table/heroId/keyword/tier/order/limit 参数即可，无需写SQL。表有：heroes英雄榜、augments海克斯、items装备、hero_augment_rank英雄海克斯排名、hero_item_build出装。注意：keyword 只匹配名字，按效果描述找装备/海克斯必须用 queryKnowledge。查'提莫有什么海克斯'用 hero_augment_rank+heroId；查'提莫胜率'用 heroes+heroId；查'黄金海克斯'用 augments+tier='黄金'")
+    public String queryDb(@P("表名，可选：heroes/augments/items/hero_augment_rank/hero_item_build") String table,
                           @P("英雄id（数字，先用 searchName 拿到），可为空") Integer heroId,
                           @P("名称关键词（只匹配英雄名/海克斯名/装备名，不匹配效果描述），可为空") String keyword,
                           @P("稀有度/分类筛选：白银/黄金/棱彩 或 T1~T5，可为空") String tier,
@@ -129,7 +124,7 @@ public class DatabaseTools {
                 + " tier=" + tier + " order=" + order + " limit=" + limit);
         try {
             if (table == null || !ALLOWED_TABLES.contains(table)) {
-                return "错误：table 必须是 heroes/augments/items/hero_augment_rank/hero_item_build/augment_combos 之一。";
+                return "错误：table 必须是 heroes/augments/items/hero_augment_rank/hero_item_build 之一。";
             }
             int lim = limit <= 0 ? 10 : Math.min(limit, 300);
             List<Map<String, Object>> rows = heroMapper.dynamicQuery(

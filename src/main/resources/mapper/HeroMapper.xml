@@ -47,8 +47,8 @@
 
     <!-- 该英雄出装方案 -->
     <select id="getBuilds" resultType="map">
-        SELECT b.build_index, b.group_index, b.slot, i.name AS item_name,
-               b.win_rate, b.pick_rate
+        SELECT b.build_index, b.group_index, b.slot, b.item_id, i.name AS item_name,
+               i.image_url AS item_image, b.win_rate, b.pick_rate
         FROM hero_item_build b
         JOIN items i ON b.item_id = i.id
         WHERE b.hero_id = #{heroId}
@@ -70,16 +70,6 @@
                win_rank
         FROM heroes
         ORDER BY win_rank ASC
-        LIMIT #{limit}
-    </select>
-
-    <!-- 三连组合 TOP N -->
-    <select id="getCombos" resultType="map">
-        SELECT c.augment_ids, ROUND(c.win_rate * 100, 1) AS win_rate_pct,
-               ROUND(c.pick_rate * 100, 1) AS pick_rate_pct
-        FROM augment_combos c
-        WHERE c.hero_id = #{heroId}
-        ORDER BY c.win_rate DESC
         LIMIT #{limit}
     </select>
 
@@ -116,19 +106,18 @@
         SELECT COUNT(*) FROM hero_profiles
     </select>
 
-    <!-- 按 id 批量查海克斯名（三连组合映射） -->
-    <select id="findAugmentNamesByIds" resultType="map">
-        SELECT id, name
-        FROM augments
-        WHERE id IN
-        <foreach collection="ids" item="id" open="(" separator="," close=")">
-            #{id}
-        </foreach>
-    </select>
-
     <!-- 全量英雄官方中文名（语音热词用：玩家说"提莫"而非"迅捷斥候"） -->
     <select id="findAllHeroNames" resultType="string">
         SELECT official_name FROM heroes WHERE official_name IS NOT NULL AND official_name != ''
+    </select>
+
+    <!-- 该英雄扩展装备（情境/推荐，带装备名+图标） -->
+    <select id="getHeroExt" resultType="map">
+        SELECT e.ext_type AS extType, e.slot, i.name AS item_name, i.image_url AS item_image
+        FROM hero_item_ext e
+        LEFT JOIN items i ON e.item_id = i.id
+        WHERE e.hero_id = #{heroId}
+        ORDER BY e.ext_type ASC, e.slot ASC
     </select>
 
     <!-- 全量海克斯名（语音热词） -->
@@ -141,6 +130,18 @@
         SELECT name FROM items WHERE name IS NOT NULL AND name != ''
     </select>
 
+    <select id="findAllHeroesWithImage" resultType="map">
+        SELECT id, name, official_name, en_name, image_url FROM heroes WHERE image_url IS NOT NULL AND image_url != ''
+    </select>
+
+    <select id="findAllAugmentsWithImage" resultType="map">
+        SELECT id, name, image_url FROM augments WHERE image_url IS NOT NULL AND image_url != ''
+    </select>
+
+    <select id="findAllItemsWithImage" resultType="map">
+        SELECT id, name, image_url FROM items WHERE image_url IS NOT NULL AND image_url != '' ORDER BY id ASC
+    </select>
+
     <!-- 动态查询（参数化）。表名/列名用白名单 choose 映射，杜绝注入；条件用 if 动态拼 -->
     <select id="dynamicQuery" resultType="map">
         <choose>
@@ -148,7 +149,7 @@
                 SELECT id, name, official_name, en_name, tier,
                        ROUND(win_rate * 100, 1) AS win_rate_pct,
                        ROUND(pick_rate * 100, 1) AS pick_rate_pct,
-                       win_rank, version
+                       win_rank, version, image_url
                 FROM heroes
                 <where>
                     <if test="heroId != null">
@@ -167,7 +168,7 @@
                 LIMIT #{limit}
             </when>
             <when test="table == 'augments'">
-                SELECT id, name, tier_name, rarity, description, tooltip
+                SELECT id, name, tier_name, rarity, description, tooltip, image_url
                 FROM augments
                 <where>
                     <if test="keyword != null and keyword != ''">
@@ -196,7 +197,8 @@
                 LIMIT #{limit}
             </when>
             <when test="table == 'hero_augment_rank'">
-                SELECT h.name AS hero_name, a.name AS augment_name, a.tier_name,
+                SELECT h.name AS hero_name, h.image_url AS hero_image,
+                       a.name AS augment_name, a.tier_name, a.image_url AS augment_image,
                        r.win_rank, ROUND(r.win_rate * 100, 1) AS win_rate_pct,
                        ROUND(r.pick_rate * 100, 1) AS pick_rate_pct
                 FROM hero_augment_rank r
@@ -232,21 +234,6 @@
                     </if>
                 </where>
                 ORDER BY b.win_rate DESC
-                LIMIT #{limit}
-            </when>
-            <when test="table == 'augment_combos'">
-                SELECT h.name AS hero_name, c.augment_ids,
-                       ROUND(c.win_rate * 100, 1) AS win_rate_pct,
-                       c.win_rank
-                FROM augment_combos c
-                JOIN heroes h ON c.hero_id = h.id
-                <where>
-                    <if test="heroId != null">AND c.hero_id = #{heroId}</if>
-                    <if test="keyword != null and keyword != ''">
-                        AND h.name LIKE CONCAT('%', #{keyword}, '%')
-                    </if>
-                </where>
-                ORDER BY c.win_rate DESC
                 LIMIT #{limit}
             </when>
             <otherwise>

@@ -1,7 +1,6 @@
 package com.example.demo.mapper;
 
 import com.example.demo.entity.Augment;
-import com.example.demo.entity.AugmentCombo;
 import com.example.demo.entity.Hero;
 import com.example.demo.entity.HeroAugmentRank;
 import com.example.demo.entity.HeroItemBuild;
@@ -37,13 +36,14 @@ public interface DataWriteMapper {
 
     int batchInsertHeroAugmentRanks(@Param("list") List<HeroAugmentRank> list);
 
-    // ===== 三连组合 =====
-    void deleteHeroCombos(@Param("heroId") Integer heroId);
-
-    int batchInsertHeroCombos(@Param("list") List<AugmentCombo> list);
-
     // ===== 装备 =====
     void deleteAllItems();
+
+    /** 删除 id 以指定前缀开头的装备（大乱斗清洗：删 22/77 前缀残留） */
+    int deleteItemsByPrefix(@Param("p1") String p1, @Param("p2") String p2);
+
+    /** 查指定 id 的 from_ids（合成来源） */
+    List<String> findFromIdsByIds(@Param("ids") List<Integer> ids);
 
     int batchInsertItems(@Param("list") List<Item> list);
 
@@ -53,6 +53,11 @@ public interface DataWriteMapper {
     int batchInsertHeroBuilds(@Param("list") List<HeroItemBuild> list);
 
     List<HeroItemBuild> findHeroBuilds(@Param("heroId") Integer heroId);
+
+    // ===== 扩展装备（情境/推荐） =====
+    void deleteHeroExt(@Param("heroId") Integer heroId);
+
+    int batchInsertHeroExt(@Param("list") List<com.example.demo.entity.HeroItemExt> list);
 
     // ===== 英雄档案 =====
     void deleteAllHeroProfiles();

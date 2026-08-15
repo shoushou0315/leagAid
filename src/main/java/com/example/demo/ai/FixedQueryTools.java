@@ -12,7 +12,7 @@ import java.util.Map;
  * 固定查询工具（MyBatis）
  *
  * AI 收到问题时先尝试此工具：
- *  - 命中固定查询（英雄胜率/海克斯排名/出装/玩法/排行榜/组合）→ 返回结构化结果
+ *  - 命中固定查询（英雄胜率/海克斯排名/出装/玩法/排行榜）→ 返回结构化结果
  *  - 未命中 → 返回固定格式的"未命中"提示，AI 再走自由查询
  */
 @Component
@@ -24,7 +24,7 @@ public class FixedQueryTools {
         this.heroMapper = heroMapper;
     }
 
-    @Tool("尝试用固定查询回答。命中英雄后一次性返回该英雄的完整数据包：胜率/Tier + 海克斯排名 + 出装方案 + 玩法档案 + 三连组合。也支持'英雄有了/拿到/刷到 某海克斯'的组合查询。命中返回数据；未命中返回【未命中固定查询，请使用自由查询】")
+    @Tool("尝试用固定查询回答。命中英雄后一次性返回该英雄的完整数据包：胜率/Tier + 海克斯排名 + 出装方案 + 玩法档案。也支持'英雄有了/拿到/刷到 某海克斯'的组合查询。命中返回数据；未命中返回【未命中固定查询，请使用自由查询】")
     public String tryFixedQuery(@P("用户的问题") String question) {
         System.out.println(">>> [Tool] tryFixedQuery 调用: " + question);
         return query(question);
@@ -71,11 +71,15 @@ public class FixedQueryTools {
         List<Map<String, Object>> builds = heroMapper.getBuilds((Integer) heroId);
         if (!builds.isEmpty()) {
             sb.append("\n").append(formatBuilds(heroDbName, builds)).append("\n");
+        } else if (question.matches(".*(出装|出什么|怎么出).*")) {
+            // 用户明确问出装，但该英雄暂无 build 数据（aramgg 新英雄/JS渲染导致采集为空）
+            // → 返回未命中，让 LLM 用 getSynergy/queryDb 结合装备知识兜底推荐，避免返回"空出装"误导
+            return "【未命中固定查询，请使用自由查询】";
         }
-        // 三连组合
-        List<Map<String, Object>> combos = heroMapper.getCombos((Integer) heroId, 3);
-        if (!combos.isEmpty()) {
-            sb.append("\n").append(formatCombos(heroDbName, combos)).append("\n");
+        // 扩展装备（情境/推荐）
+        List<Map<String, Object>> exts = heroMapper.getHeroExt((Integer) heroId);
+        if (!exts.isEmpty()) {
+            sb.append("\n").append(formatExt(heroDbName, exts)).append("\n");
         }
         // 玩法档案
         Map<String, Object> profile = heroMapper.getHeroProfile((Integer) heroId);
@@ -202,51 +206,25 @@ public class FixedQueryTools {
         return sb.toString().trim();
     }
 
+    private String formatExt(String heroName, List<Map<String, Object>> exts) {
+        StringBuilder sb = new StringBuilder("【" + heroName + " 扩展装备】\n");
+        String curType = "";
+        for (Map<String, Object> e : exts) {
+            String type = "situational".equals(e.get("extType")) ? "情境装备" : "推荐装备";
+            if (!type.equals(curType)) {
+                curType = type;
+                sb.append("\n").append(type).append(": ");
+            }
+            sb.append(e.get("item_name")).append(" ");
+        }
+        return sb.toString().trim();
+    }
+
     private String formatProfile(String heroName, Map<String, Object> p) {
         StringBuilder sb = new StringBuilder("【" + heroName + " 玩法档案】\n");
         if (p.get("passive") != null) sb.append("被动: ").append(p.get("passive")).append("\n");
         if (p.get("spells") != null) sb.append("技能: ").append(p.get("spells")).append("\n");
         if (p.get("ally_tips") != null) sb.append("玩法技巧: ").append(p.get("ally_tips")).append("\n");
-        return sb.toString().trim();
-    }
-
-    private String formatCombos(String heroName, List<Map<String, Object>> combos) {
-        StringBuilder sb = new StringBuilder("【" + heroName + " 三连组合】\n");
-        // 收集所有海克斯 id → 一次查询映射名字
-        java.util.Set<Integer> ids = new java.util.HashSet<>();
-        for (Map<String, Object> c : combos) {
-            Object raw = c.get("augment_ids");
-            if (raw != null) {
-                for (String s : String.valueOf(raw).split(":")) {
-                    try { ids.add(Integer.parseInt(s.trim())); } catch (NumberFormatException ignored) {}
-                }
-            }
-        }
-        java.util.Map<Integer, String> idToName = new java.util.HashMap<>();
-        if (!ids.isEmpty()) {
-            for (Map<String, Object> a : heroMapper.findAugmentNamesByIds(new java.util.ArrayList<>(ids))) {
-                idToName.put(((Number) a.get("id")).intValue(), String.valueOf(a.get("name")));
-            }
-        }
-        int i = 1;
-        for (Map<String, Object> c : combos) {
-            Object raw = c.get("augment_ids");
-            String names = "";
-            if (raw != null) {
-                java.util.List<String> nameList = new java.util.ArrayList<>();
-                for (String s : String.valueOf(raw).split(":")) {
-                    try {
-                        int id = Integer.parseInt(s.trim());
-                        nameList.add(idToName.getOrDefault(id, s));
-                    } catch (NumberFormatException ignored) {
-                        nameList.add(s);
-                    }
-                }
-                names = String.join("+", nameList);
-            }
-            sb.append(i++).append(". ").append(names)
-                    .append(" 胜率").append(c.get("win_rate_pct")).append("%\n");
-        }
         return sb.toString().trim();
     }
 

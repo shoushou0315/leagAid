@@ -26,4 +26,6 @@ public class Item {
     private String intoIds;       // 可升级为，逗号分隔
 
     private String version;       // 数据版本
+
+    private String imageUrl;      // 图标 URL（ddragon item/{id}.png）
 }
