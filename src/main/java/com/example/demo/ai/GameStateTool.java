@@ -33,42 +33,47 @@ public class GameStateTool {
      */
     @Tool("获取当前对局的实时状态：阶段、我玩的英雄、板凳可选英雄、我方/对方阵容（含熟练度与装备）、已选海克斯。问'选人/哪些好赢/选哪个英雄/出什么装备/怎么打对面/选海克斯'等问题时先调用本工具了解当前对局")
     public String getGameState(@dev.langchain4j.agent.tool.ToolMemoryId String sessionId) {
-        GameState state = gameStateService.getLatest();
-        StringBuilder sb = new StringBuilder();
-        if (state == null) {
-            sb.append("无对局数据（可能未进入游戏）\n");
-        } else {
-            sb.append("阶段：").append(state.getPhase() == null ? "未知" : state.getPhase()).append("\n");
-            if (state.getMyChampion() != null && !state.getMyChampion().isEmpty()) {
-                sb.append("我玩的英雄：").append(state.getMyChampion()).append("\n");
+        try {
+            GameState state = gameStateService.getLatest();
+            StringBuilder sb = new StringBuilder();
+            if (state == null) {
+                sb.append("无对局数据（可能未进入游戏）\n");
+            } else {
+                sb.append("阶段：").append(state.getPhase() == null ? "未知" : state.getPhase()).append("\n");
+                if (state.getMyChampion() != null && !state.getMyChampion().isEmpty()) {
+                    sb.append("我玩的英雄：").append(state.getMyChampion()).append("\n");
+                }
+                // 板凳（选人阶段可选英雄）
+                if (state.getBench() != null && !state.getBench().isEmpty()) {
+                    sb.append("板凳可选英雄：").append(String.join("、", state.getBench())).append("\n");
+                }
+                // 双方阵容
+                List<GameState.GamePlayer> players = state.getPlayers();
+                if (players != null && !players.isEmpty()) {
+                    List<String> myTeam = players.stream()
+                            .filter(p -> !"对面".equals(p.getTeam()))
+                            .map(GameStateTool::describe)
+                            .collect(Collectors.toList());
+                    List<String> enemyTeam = players.stream()
+                            .filter(p -> "对面".equals(p.getTeam()))
+                            .map(GameStateTool::describe)
+                            .collect(Collectors.toList());
+                    if (!myTeam.isEmpty()) sb.append("我方阵容：\n").append(String.join("\n", myTeam)).append("\n");
+                    if (!enemyTeam.isEmpty()) sb.append("对方阵容：\n").append(String.join("\n", enemyTeam)).append("\n");
+                }
             }
-            // 板凳（选人阶段可选英雄）
-            if (state.getBench() != null && !state.getBench().isEmpty()) {
-                sb.append("板凳可选英雄：").append(String.join("、", state.getBench())).append("\n");
+            // 已选海克斯（当前局）
+            if (sessionId != null && !sessionId.isBlank()) {
+                List<String> hexHistory = hexHistoryService.get(sessionId);
+                if (!hexHistory.isEmpty()) {
+                    sb.append("本局已选海克斯：").append(String.join("、", hexHistory)).append("\n");
+                }
             }
-            // 双方阵容
-            List<GameState.GamePlayer> players = state.getPlayers();
-            if (players != null && !players.isEmpty()) {
-                List<String> myTeam = players.stream()
-                        .filter(p -> !"对面".equals(p.getTeam()))
-                        .map(GameStateTool::describe)
-                        .collect(Collectors.toList());
-                List<String> enemyTeam = players.stream()
-                        .filter(p -> "对面".equals(p.getTeam()))
-                        .map(GameStateTool::describe)
-                        .collect(Collectors.toList());
-                if (!myTeam.isEmpty()) sb.append("我方阵容：\n").append(String.join("\n", myTeam)).append("\n");
-                if (!enemyTeam.isEmpty()) sb.append("对方阵容：\n").append(String.join("\n", enemyTeam)).append("\n");
-            }
+            return sb.toString();
+        } catch (Exception e) {
+            // 降级：Redis 挂/反序列化失败时不抛异常，返回友好提示，让对话继续
+            return "对局数据暂时不可用（" + e.getMessage() + "），请稍后再试。";
         }
-        // 已选海克斯（当前局）
-        if (sessionId != null && !sessionId.isBlank()) {
-            List<String> hexHistory = hexHistoryService.get(sessionId);
-            if (!hexHistory.isEmpty()) {
-                sb.append("本局已选海克斯：").append(String.join("、", hexHistory)).append("\n");
-            }
-        }
-        return sb.toString();
     }
 
     /**
