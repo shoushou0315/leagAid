@@ -32,6 +32,10 @@ public class GameStateService {
     private volatile String currentSessionId = "";
     private volatile String boundGameId = "";   // 当前会话绑定的局内 gameId
     private volatile boolean prevPhaseIsChampSelect = false;
+    private volatile long sessionCreatedAt = System.currentTimeMillis();
+
+    /** 选人阶段会话防抖窗口：窗口内 phase 抖动（ChampSelect↔其他）不重复新建，只有真正新一局才切换 */
+    private static final long SESSION_RETENTION_MS = 5 * 60 * 1000;
 
     public GameStateService(@Value("${app.redis.host:127.0.0.1}") String redisHost,
                             @Value("${app.redis.port:6379}") int redisPort,
@@ -60,31 +64,17 @@ public class GameStateService {
     }
 
     /** 会话锚定：
-     *  选人阶段 = 一局对话起点，生成 sessionId（时间戳）一局到底，不换 id
-     *  局内 = gameId 绑定到当前 sessionId（仅用于重连识别/新局校验），不改 id
-     *  中途进入局内（没经过选人）→ 用 gameId 补建 sessionId
+     *  同一局 gameId 恒定 → 复用同一 sessionId；只有"真正新一局"才切换。
+     *  局内 gameId 变化 → 真新局 → 换新会话并清理上一局海克斯历史；
+     *  选人阶段：无会话 或 上一个会话绑定的局已结束（超窗）才新建；否则复用，防 LCU 抖动导致反复新建。
+     *  大厅/结算等非对局阶段：保留当前会话，不回退、不新建。
      */
     private synchronized void resolveSession(GameState state) {
         String phase = state.getPhase();
         String gameId = state.getCurrentGameId() == null ? "" : state.getCurrentGameId();
         boolean inGame = "InProgress".equals(phase) || "GameStart".equals(phase);
-
-        if ("ChampSelect".equals(phase)) {
-            // 新一局起点：上一阶段不是选人，或还没有会话 → 建新 sessionId
-            if (currentSessionId.isEmpty() || !prevPhaseIsChampSelect) {
-                String oldSessionId = currentSessionId;
-                currentSessionId = newSessionId();
-                latest.setSessionId(currentSessionId);
-                System.out.println("[会话] 选人开始 → sessionId=" + currentSessionId);
-                // 清理上一局已选海克斯历史
-                if (!oldSessionId.isEmpty() && !oldSessionId.equals(currentSessionId)) {
-                    hexHistoryService.clear(oldSessionId);
-                }
-            }
-            prevPhaseIsChampSelect = true;
-        } else {
-            prevPhaseIsChampSelect = false;
-        }
+        boolean inChampSelect = "ChampSelect".equals(phase);
+        long now = System.currentTimeMillis();
 
         if (inGame) {
             if (currentSessionId.isEmpty()) {
@@ -93,19 +83,41 @@ public class GameStateService {
                 latest.setSessionId(currentSessionId);
                 boundGameId = gameId;
                 System.out.println("[会话] 中途进入局内 → sessionId=" + currentSessionId);
-            } else {
-                // 已有会话：绑定 gameId（不换 id，只记录归属）
-                if (!gameId.isEmpty()) boundGameId = gameId;
+            } else if (!gameId.isEmpty() && !gameId.equals(boundGameId)) {
+                // 真·新一局：进入局内且 gameId 变化 → 新会话，清理上一局已选海克斯
+                String oldSessionId = currentSessionId;
+                currentSessionId = newSessionId();
+                latest.setSessionId(currentSessionId);
+                boundGameId = gameId;
+                System.out.println("[会话] 新一局(局内gameId变化) → sessionId=" + currentSessionId);
+                if (!oldSessionId.isEmpty() && !oldSessionId.equals(currentSessionId)) {
+                    hexHistoryService.clear(oldSessionId);
+                }
+            } else if (!gameId.isEmpty()) {
+                boundGameId = gameId;   // 同一局，仅记录归属，不换 id
             }
-        }
-
-        if (!inGame && !"ChampSelect".equals(phase)) {
-            // 回大厅/结算：清空绑定，下一局选人重新触发
-            boundGameId = "";
+        } else if (inChampSelect) {
+            prevPhaseIsChampSelect = true;
+            // 选人：无会话，或上一局已结束且超防抖窗口 → 新建；否则复用当前（防阶段抖动）
+            boolean fresh = currentSessionId.isEmpty()
+                    || (now - sessionCreatedAt > SESSION_RETENTION_MS);
+            if (fresh) {
+                String oldSessionId = currentSessionId;
+                currentSessionId = newSessionId();
+                latest.setSessionId(currentSessionId);
+                System.out.println("[会话] 选人开始 → sessionId=" + currentSessionId);
+                if (!oldSessionId.isEmpty() && !oldSessionId.equals(currentSessionId)) {
+                    hexHistoryService.clear(oldSessionId);
+                }
+            }
+        } else {
+            prevPhaseIsChampSelect = false;
+            boundGameId = "";   // 非对局/结算：保留会话 id，但解除 gameId 绑定，等下一局
         }
     }
 
     private String newSessionId() {
+        sessionCreatedAt = System.currentTimeMillis();
         return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
     }
 

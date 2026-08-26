@@ -29,7 +29,7 @@ button{padding:8px 16px;border:none;border-radius:4px;cursor:pointer}
 <h3>海克斯大乱斗助手</h3>
 <div class="container">
   <div id="sidebar">
-    <h4 style="margin-bottom:4px">历史会话</h4>
+    <h4 style="margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">历史会话<button id="newBtn" style="padding:2px 10px;font-size:12px">新会话</button></h4>
     <div id="sessionList"></div>
   </div>
   <div id="main">
@@ -40,23 +40,52 @@ button{padding:8px 16px;border:none;border-radius:4px;cursor:pointer}
     </div>
     <div class="voice-hint">按住 <b>F6</b> 或点击 🎤 说话，松开自动识别并发送</div>    <div id="voiceStatus" style="font-size:11px;color:#b00;margin-top:4px"></div>
     <div id="curSession" style="font-size:12px;color:#888;margin-top:6px"></div>
+    <div style="font-size:12px;margin-top:2px"><label><input type="checkbox" id="followBtn" checked> 跟随对局（游戏开局自动切换新会话；关闭后可稳定浏览历史）</label></div>
   </div>
 </div>
 <script>
-var sessionId = new Date().toISOString().replace(/[-:T]/g,'').slice(0,15);
+// 会话 id：优先恢复上次会话（本机持久化），无则暂空；仅在真正发起对话/打开历史时确定，避免刷新生成一堆对不上的散会话
+var sessionId = localStorage.getItem('leagaid_session') || '';
+var followGame = true;   // 是否跟随对局自动切换；关闭后能稳定看历史（游戏未开时后端会残留对局态，靠此开关挡住）
 var chatBox = document.getElementById('chatBox');
 
-// 从游戏会话服务获取 sessionId（一局一轮对话，新局自动切换）
+// 创建新会话（游戏未开也能用）/ 切换并持久化。手动新建时自动关闭"跟随对局"，避免之后对局把当前手动会话切走
+async function newSession(){
+    var r = await fetch('/session/new');
+    var id = await r.text();
+    sessionId = id;
+    localStorage.setItem('leagaid_session', sessionId);
+    followGame = false;
+    var fb = document.getElementById('followBtn');
+    if(fb) fb.checked = false;
+    chatBox.innerHTML = '';
+    updateSessionLabel();
+    loadSessions();
+    return id;
+}
+document.getElementById('newBtn').onclick = newSession;
+
+// 跟随对局开关：关闭后不再被残留/对局 sessionId 覆盖，历史稳定可看
+document.getElementById('followBtn').onchange = function(ev){
+    followGame = ev.target.checked;
+    if(followGame) syncSession();   // 重新开启时立即跟一次
+};
+
+// 从游戏会话服务同步 sessionId：仅当开启"跟随对局"且游戏处于真实对局阶段才切换；
+// 关闭跟随/游戏未开/大厅时不干扰本地会话，保证能稳定查看历史
 async function syncSession(){
+    if(!followGame) return;
     try{
         var r = await fetch('/api/game/state');
         var s = await r.json();
-        if(s && s.sessionId){
+        if(s && s.sessionId && (s.phase === 'ChampSelect' || s.phase === 'InProgress' || s.phase === 'GameStart')){
             if(sessionId !== s.sessionId){
                 sessionId = s.sessionId;
+                localStorage.setItem('leagaid_session', sessionId);
                 chatBox.innerHTML = '';
                 addSysMsg('🎮 新对局开始，已开启新会话');
                 updateSessionLabel();
+                loadSessions();
             }
         }
     }catch(e){}
@@ -212,6 +241,7 @@ async function send(){
     var input = document.getElementById('msg');
     var msg = input.value.trim();
     if(!msg) return;
+    if(!sessionId){ await newSession(); }   // 无会话时自动新建，不再用随机 id
     addMsg('user', msg);
     input.value = '';
     var div = addMsg('ai', '');
@@ -271,6 +301,7 @@ async function loadSessions(){
 
 async function openSession(id){
     sessionId = id;
+    localStorage.setItem('leagaid_session', sessionId);
     updateSessionLabel();
     chatBox.innerHTML = '';
     try{

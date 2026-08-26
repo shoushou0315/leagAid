@@ -19,9 +19,10 @@
 - 🎤 **全语音交互**：按住 **F6** 说话，松开自动识别发送（JNativeHook 全局热键，**全屏游戏可用**）
 - 👁 **一键选海克斯**：说"选哪个海克斯"→ 自动截图 → **qwen-vl-max 视觉识别** → LLM 结合**英雄被动+技能联动**、阵容、装备推荐
 - 📊 **实时对局感知**：AI 自动获取自己/双方阵容/板凳/装备/熟练度/已选海克斯
+- 🧭 **确定性意图路由**：LLM 做结构化意图分类（替代脆弱正则），跨对话记忆"已拥有海克斯"前提；**代码前置取数注入**，关键对局数据由代码先取再喂给模型，漏调工具也有数据、机制上防幻觉
 - 🧠 **多工具 Agent**：10 个工具（固定查询 / 参数化查询 / 机制联动 / 语义检索 / 游戏状态 / 海克斯识别 / 知识库更新），**ReAct 思考模式**引导（思考→行动→观察→回答）
 - 🛡 **工具降级**：每个工具失败都有兜底返回，Redis/截图/查询异常时不中断对话，Agent 稳定不崩
-- 🔄 **一局一轮对话**：sessionId 锚定，换局自动切会话，记忆持久化
+- 🔄 **一局一轮对话**：sessionId 锚定，换局自动切会话，记忆持久化；**支持手动新建会话**（不开游戏也能查看/续聊历史），断线重连不误切会话
 - 💬 **回答范畴放宽**：游戏问题走工具链专业回答；非游戏闲聊用常识友好回应
 - 🛡 **防幻觉**：所有数据来自工具返回，查不到如实说明，不编造胜率/排名
 
@@ -93,10 +94,14 @@ mvn spring-boot:run
    ├─ GET /chat             SSE 流式回答
    └─ GET /api/game/hex/recognize  SSE 一键海克斯识别
         ▼
-ChatController ──> QueryRouter(硬路由，正则)
+ChatController ──> QueryRouter(硬触发白名单，非正则)
    ├─ 命中 → 直接返回数据（0 次 LLM 调用）
-   └─ miss → ConsultantService(AiService)
-              │ @SystemMessage 提示词（工具0~7 + 分类A-H + 对局引导）
+   └─ miss → IntentClassifier(LLM 结构化意图分类，enum 列表)
+              │ 多意图 / 跨轮记忆"已拥有海克斯"
+              │ ↓
+              GameContextInjector(代码前置取数: getGameState + 已拥有海克斯)
+              │ 注入前缀 → ConsultantService(AiService)
+              │ @SystemMessage 提示词（工具 + 意图分流 + 对局引导 + 反拆查）
               │ ChatMemory(JsonFile 持久化, 一局一个文件)
               ▼
          qwen3.8-max（流式 + 工具调用, enable_thinking:false）
@@ -130,17 +135,20 @@ ChatController ──> QueryRouter(硬路由，正则)
 
 ### 回答路由
 
-1. **硬路由 `QueryRouter`**（代码层）：正则识别高频固定查询（英雄排行/数据包/"英雄有了X"组合），**按问题类型裁剪**（问出装只返回出装，问海克斯只返回海克斯），命中直接返回数据，0 次 LLM 调用。
-2. **LLM 工具链**（硬路由 miss 后）：提示词按问题类型 A-H 分流——
+1. **硬触发 `QueryRouter`**（代码层，白名单非正则）：死指令（"更新知识库/刷新数据"）精确匹配直接执行；"如果/那/再"开头追问直接放行走模型。命中短路 0 次 LLM。
+2. **意图分类 `IntentClassifier`**（LLM 结构化，enum 列表）：把问题归为 HEX_PICK/BUILD/COUNTER/SYNERGY/FREE_QUERY/DESCRIPTIVE/UPDATE_DB/CHAT，可多意图；声明"已有 X"归 SYNERGY、追问承接上文主题，避免误判。
+3. **代码前置取数注入 `GameContextInjector`**：按意图由代码先取 `getGameState` + 会话内"已拥有海克斯"，拼成注入前缀喂给模型（无游戏也能注入已拥有前提）。模型只做推理与措辞，关键数据不靠模型自觉调工具。
+4. **LLM 工具链**（注入后的主回答）：
    - 选海克斯：`recognizeHex` 截图识别 → `getGameState` 看阵容/装备 → **`getSynergy` 逐条分析被动+Q/W/E/R 与候选海克斯联动** → 结合对面阵容/已有出装推荐
-   - 数据类：`tryFixedQuery` 固定查询 → 未命中走 `queryDb` 参数化查询 / `getSynergy` 机制联动
-   - 描述类：`queryKnowledge` 语义检索（RAG），**与动态 SQL 并行车道**（`queryDb` 的 keyword 只匹配名字，按效果/机制描述找装备/海克斯必须走 RAG）
+   - 数据/描述类：固定查询 → `queryDb` 参数化查询 / `queryKnowledge` 语义检索（RAG 与动态 SQL 并行车道）；`queryDb` 的 keyword 只匹配名字，按效果/机制描述找装备/海克斯必须走 RAG
    - 更新类：`updateKnowledge` 触发全量同步 + 重建向量索引（更新期间 `/chat` 拦截所有回答）
 
 ### 防幻觉设计
 
 - 对局数据（海克斯选项/阵容/装备/板凳）**必须**来自 `getGameState()`/`recognizeHex()` 实时工具，不信历史记忆，工具与记忆冲突时以实时为准
-- 工具返回"无结果"时明确告知用户，**禁止编造任何胜率/排名/场次/装备效果数字**
+- **代码前置注入兜底**：关键数据由 `GameContextInjector` 先取再注入，模型漏调工具也有数据；注入里声明"数据已由代码获取"禁止重复调用获取同一信息
+- 「**已拥有海克斯**」作为确定性前提每轮注入（跨对话固化），模型不再反复"我漏看了"
+- 工具返回"无结果"时明确告知用户，**禁止编造任何胜率/排名/场次/装备效果数字**；海克斯/装备效果只引用工具返回原文
 - 按阶段判断可用数据：选人阶段无装备/对面阵容，如实说明
 
 ---
@@ -159,11 +167,12 @@ ChatController ──> QueryRouter(硬路由，正则)
 - 重连机制：LeagAidRunner 每 5s 尝试连 LCU，连上才启动采集；先开项目后开游戏也能自动接上
 - 热键解耦：F6 语音热键在 Spring 启动即注册，**不依赖游戏客户端**（游戏没开也能语音对话，开了才补对局数据）
 
-### 会话锚定（一局一轮对话）
+### 会话锚定（一局一轮对话 + 手动会话）
 
-- 选人阶段生成 sessionId（时间戳），一局到底不换 id
-- 局内绑定 gameId（重连识别同一局；中途进入局内用 gameId 补建会话）
+- 选人阶段生成 sessionId（时间戳），一局到底不换 id；局内绑定 gameId（重连识别同一局；中途进入局内用 gameId 补建会话）
 - 新一局自动切新会话 + 清理上一局已选海克斯（Redis `hex:history:{sessionId}`）
+- **会话防抖 + 手动模式**：LCU 重试/阶段抖动不反复新建；可手动新建会话（不开游戏也能查看/续聊历史），关闭"跟随对局"即进入手动浏览
+- **断线兜底**：重连失败时对局态置 `None`（防残留假对局），重连成功同局不误切、换局正常切换
 
 ---
 
@@ -190,9 +199,12 @@ src/main/java/com/example/demo/
 │       ├── TeammateAnalyzer / GameDataReader / DataHub / DataHubRedisSync
 │       ├── MiniRedisClient / VoiceHotkeyService / LeagAidRunner
 ├── ai/
+│   ├── Intent.java               # 意图枚举（HEX_PICK/BUILD/COUNTER/SYNERGY/...）
+│   ├── IntentClassifier.java     # 结构化意图分类（AiService，enum 列表）
+│   ├── GameContextInjector.java  # 代码前置取数 + "已拥有海克斯"注入
 │   ├── DatabaseTools.java      # getSchema/searchName/queryDb/getSynergy
 │   ├── FixedQueryTools.java    # tryFixedQuery 固定查询
-│   ├── QueryRouter.java        # 硬路由
+│   ├── QueryRouter.java        # 硬触发白名单 + 追问放行
 │   ├── GameStateTool.java      # getGameState/saveHex
 │   ├── HexRecognizeTool.java   # recognizeHex
 │   ├── DynamicContentRetriever.java  # queryKnowledge（RAG）

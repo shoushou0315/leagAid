@@ -1,6 +1,9 @@
 package com.example.demo.controller;
 
 import com.example.demo.ai.DynamicContentRetriever;
+import com.example.demo.ai.GameContextInjector;
+import com.example.demo.ai.Intent;
+import com.example.demo.ai.IntentClassifier;
 import com.example.demo.ai.QueryRouter;
 import com.example.demo.service.ConsultantService;
 import dev.langchain4j.data.message.ChatMessage;
@@ -28,15 +31,21 @@ public class ChatController {
     private final ConsultantService consultantService;
     private final DynamicContentRetriever ragRetriever;
     private final QueryRouter queryRouter;
+    private final IntentClassifier intentClassifier;
+    private final GameContextInjector contextInjector;
     private final Path memoryDir;
 
     public ChatController(ConsultantService consultantService,
                           DynamicContentRetriever ragRetriever,
                           QueryRouter queryRouter,
+                          IntentClassifier intentClassifier,
+                          GameContextInjector contextInjector,
                           @Value("${app.memory-dir:data/chat-memories}") String memoryDir) {
         this.consultantService = consultantService;
         this.ragRetriever = ragRetriever;
         this.queryRouter = queryRouter;
+        this.intentClassifier = intentClassifier;
+        this.contextInjector = contextInjector;
         this.memoryDir = Path.of(memoryDir);
         this.memoryDir.toFile().mkdirs();
     }
@@ -52,9 +61,34 @@ public class ChatController {
         if (routed != null) {
             return Flux.just(routed);
         }
-        // 直接传原始用户消息（不拼前缀，避免污染记忆/前端显示）；
-        // "固定查询已试过、别重复调"由系统提示词统一约束
-        return consultantService.chat(sessionId, message);
+        // 意图分类（纯文本返回，容错解析为枚举列表；失败降级 CHAT 兜底，绝不阻塞主回答）
+        java.util.List<Intent> intents;
+        try {
+            intents = parseIntents(intentClassifier.classify(message));
+        } catch (Exception e) {
+            System.out.println("[意图] 分类失败，降级 CHAT: " + e.getMessage());
+            intents = java.util.List.of(Intent.CHAT);
+        }
+        // 识别用户口述"我拿到/选了 XX海克斯"，固化为已拥有前提
+        contextInjector.recordOwned(sessionId, message);
+        // 代码前置取数注入：把实时对局数据 + 已拥有海克斯塞给模型，漏调工具也有数据、前提不健忘
+        String prefix = contextInjector.inject(sessionId, intents);
+        String input = prefix.isEmpty() ? message : prefix + "\n" + message;
+        System.out.println("[意图] " + intents + (prefix.isEmpty() ? " (无注入)" : " (已注入对局数据)"));
+        // 直接传用户消息（不拼业务前缀，避免污染记忆/前端显示）；"固定查询已试过、别重复调"由系统提示词统一约束
+        return consultantService.chat(sessionId, input);
+    }
+
+    /** 容错解析意图分类结果：模型可能返回 "SYNERGY" / [HEX_PICK,BUILD] / 带引号逗号等，统一清洗；无效/空 → [CHAT] */
+    private static java.util.List<Intent> parseIntents(String raw) {
+        if (raw == null || raw.isBlank()) return java.util.List.of(Intent.CHAT);
+        java.util.Set<Intent> out = new java.util.LinkedHashSet<>();
+        for (String token : raw.split("[,，;、\\n\\s]+")) {
+            String t = token.trim().replace("\"", "").replace("'", "").toUpperCase();
+            if (t.isEmpty()) continue;
+            try { out.add(Intent.valueOf(t)); } catch (IllegalArgumentException ignored) { }
+        }
+        return out.isEmpty() ? java.util.List.of(Intent.CHAT) : new java.util.ArrayList<>(out);
     }
 
     /** 开新会话：返回时间戳 sessionId */

@@ -71,13 +71,17 @@ public class GamePhaseWatcher {
                 String next = fetchPhase();
                 if (next == null) {
                     // 连接失败：连续 3 次后尝试重连 LCU（端口/token 可能已变）
-                    if (++failCount >= 3) {
-                        System.out.println("[轮询] LCU 连接异常，尝试重连...");
-                        if (lcu.reconnect()) {
-                            failCount = 0;
-                            System.out.println("[轮询] LCU 重连成功");
-                        }
+                if (++failCount >= 3) {
+                    System.out.println("[轮询] LCU 连接异常，尝试重连...");
+                    if (lcu.reconnect()) {
+                        failCount = 0;
+                        System.out.println("[轮询] LCU 重连成功");
+                    } else {
+                        // 重连也失败 → 游戏客户端已下线 → 对局态置 None，避免残留 InProgress 一直写 Redis（前端不再看假对局）
+                        DataHub.get().setPhase("None");
+                        System.out.println("[轮询] LCU 不可用，对局态置 None（防残留）");
                     }
+                }
                     continue;
                 }
                 failCount = 0;

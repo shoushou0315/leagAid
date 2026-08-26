@@ -9,11 +9,14 @@ import com.example.demo.service.JsonFileChatMemoryStore;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import dev.langchain4j.service.AiServices;
+import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -58,6 +61,24 @@ public class AppConfig {
                 .logResponses(false)  // 关闭 HTTP 响应日志
                 .build();
         return new com.example.demo.model.QwenStreamingChatModel(raw);  // 清洗 tool arguments 尾逗号
+    }
+    @Bean
+    ChatModel chatModel() {
+        // 意图分类专用：只求快。关 thinking（对齐主对话，否则 qwen3 思考会拖到超时）；短超时 + 不重试，失败由 ChatController 降级 CHAT
+        return OpenAiChatModel.builder()
+                .apiKey(chatApiKey)
+                .baseUrl(chatBaseUrl)
+                .modelName(chatModel)
+                .customParameters(java.util.Map.of("enable_thinking", false))
+                .timeout(Duration.ofSeconds(8))
+                .maxRetries(0)
+                .build();
+    }
+    @Bean
+    com.example.demo.ai.IntentClassifier intentClassifier(ChatModel chatModel) {
+        return AiServices.builder(com.example.demo.ai.IntentClassifier.class)
+                .chatModel(chatModel)
+                .build();
     }
     @Bean
     EmbeddingModel embeddingModel() {
