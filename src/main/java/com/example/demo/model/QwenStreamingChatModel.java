@@ -73,7 +73,6 @@ public class QwenStreamingChatModel implements StreamingChatModel {
                         .build())
                 .tokenUsage(response.tokenUsage())
                 .finishReason(response.finishReason())
-                .metadata(response.metadata())
                 .build();
     }
 

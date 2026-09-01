@@ -142,6 +142,35 @@
         SELECT id, name, image_url FROM items WHERE image_url IS NOT NULL AND image_url != '' ORDER BY id ASC
     </select>
 
+    <!-- searchName：按名查英雄（称号/官方名/英文名，模糊容错） -->
+    <select id="searchNameHeroes" resultType="map">
+        SELECT id, name FROM heroes
+        WHERE name LIKE CONCAT('%', #{keyword}, '%') OR official_name LIKE CONCAT('%', #{keyword}, '%')
+           OR en_name LIKE CONCAT('%', #{keyword}, '%')
+        LIMIT 5
+    </select>
+    <!-- searchName：按名查海克斯 -->
+    <select id="searchNameAugments" resultType="map">
+        SELECT id, name FROM augments WHERE name LIKE CONCAT('%', #{keyword}, '%') OR en_name LIKE CONCAT('%', #{keyword}, '%') LIMIT 5
+    </select>
+    <!-- searchName：按名查装备 -->
+    <select id="searchNameItems" resultType="map">
+        SELECT id, name FROM items WHERE name LIKE CONCAT('%', #{keyword}, '%') OR en_name LIKE CONCAT('%', #{keyword}, '%') LIMIT 5
+    </select>
+    <!-- getSynergy：按名查海克斯(效果/说明) -->
+    <select id="getSynergyAugments" resultType="map">
+        SELECT id, name, tier_name, description, tooltip FROM augments WHERE name LIKE CONCAT('%', #{keyword}, '%') LIMIT 2
+    </select>
+    <!-- getSynergy：该英雄该海克斯的排名/胜率 -->
+    <select id="getSynergyAugmentStats" resultType="map">
+        SELECT win_rank, ROUND(win_rate * 100, 1) AS win_rate_pct, ROUND(pick_rate * 100, 1) AS pick_rate_pct
+        FROM hero_augment_rank WHERE hero_id = #{heroId} AND augment_id = #{augmentId} LIMIT 1
+    </select>
+    <!-- getSynergy：按名查装备(效果/说明) -->
+    <select id="getSynergyItems" resultType="map">
+        SELECT name, plaintext, description, tags FROM items WHERE name LIKE CONCAT('%', #{keyword}, '%') LIMIT 2
+    </select>
+
     <!-- 动态查询（参数化）。表名/列名用白名单 choose 映射，杜绝注入；条件用 if 动态拼 -->
     <select id="dynamicQuery" resultType="map">
         <choose>

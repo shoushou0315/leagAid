@@ -147,7 +147,7 @@ public class DynamicContentRetriever {
      * 只在此类需求时调用：说不出确切名字、用效果或机制描述提问（如"克护盾的装备""适合攻速流的海克斯"）。
      * 结构化查询（指名道姓/查数字）请优先用 tryFixedQuery / queryDb，不要调用本工具。
      */
-    @Tool("语义检索知识库：按效果/机制描述查找海克斯、装备、英雄玩法。返回匹配内容列表。仅当问题用'描述效果、找不到确切名称'时才调用；指名道姓/要数据的问题不要用")
+    @Tool("语义检索知识库：按'需求/机制/效果'查找英雄、装备、海克斯。返回匹配内容列表。凡按语义/机制找对象（克回血、克护盾、打坦克、适合攻速流等）必用；指名道姓查数据/出装/胜率走 queryDb/tryFixedQuery，不要用本工具")
     public String queryKnowledge(@P("用自然语言描述想找的内容，如：克制护盾的装备") String question) {
         System.out.println("[工具] queryKnowledge: " + question);
         if (!vectorReady) {

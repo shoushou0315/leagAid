@@ -3,7 +3,6 @@ package com.example.demo.ai;
 import com.example.demo.mapper.HeroMapper;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -12,11 +11,7 @@ import java.util.Map;
 /**
  * 数据库查询工具集（参数化查询 + 语义检索 + 联动分析）
  *
- * AI 可通过这些工具查询数据库：
- *  - getSchema: 了解表结构
- *  - searchName: 中文名 → id 解析
- *  - queryDb: 参数化动态查询（LLM 填参数，不写 SQL；MyBatis 动态 SQL 生成）
- *  - getSynergy: 英雄 + 装备/海克斯 的机制联动分析素材（技能 + 效果描述）
+ * 全部查询走 MyBatis（HeroMapper），无 JdbcTemplate。
  */
 @Component
 public class DatabaseTools {
@@ -24,11 +19,9 @@ public class DatabaseTools {
     private static final java.util.Set<String> ALLOWED_TABLES = java.util.Set.of(
             "heroes", "augments", "items", "hero_augment_rank", "hero_item_build");
 
-    private final JdbcTemplate jdbc;
     private final HeroMapper heroMapper;
 
-    public DatabaseTools(JdbcTemplate jdbc, HeroMapper heroMapper) {
-        this.jdbc = jdbc;
+    public DatabaseTools(HeroMapper heroMapper) {
         this.heroMapper = heroMapper;
     }
 
@@ -81,28 +74,20 @@ public class DatabaseTools {
     }
 
     /** 名称解析：中文名/称号/英文名 → id */
-    @Tool("按名称模糊搜索英雄/海克斯/装备（英雄支持称号/官方中文名/英文名），返回 [类型, 名称, id] 列表")
+    @Tool("按名称搜索英雄/海克斯/装备（英雄支持称号/官方名/英文名），返回 [类型, 名称, id] 列表")
     public String searchName(@P("名称关键词，如：薇恩、泰隆、刀锋之影") String keyword) {
         System.out.println("[工具] searchName " + keyword);
         try {
             StringBuilder sb = new StringBuilder();
-            String like = "%" + keyword + "%";
-
-            // 1. 英雄（匹配 称号 / 官方中文名 / 英文名）
-            List<Map<String, Object>> heroes = jdbc.queryForList(
-                    "SELECT id, name FROM heroes WHERE name LIKE ? OR official_name LIKE ? OR en_name LIKE ? LIMIT 5", like, like, like);
+            List<Map<String, Object>> heroes = heroMapper.searchNameHeroes(keyword);
             for (Map<String, Object> h : heroes) {
                 sb.append("英雄: ").append(h.get("name")).append(" (id=").append(h.get("id")).append(")\n");
             }
-            // 2. 海克斯
-            List<Map<String, Object>> augs = jdbc.queryForList(
-                    "SELECT id, name FROM augments WHERE name LIKE ? OR en_name LIKE ? LIMIT 5", like, like);
+            List<Map<String, Object>> augs = heroMapper.searchNameAugments(keyword);
             for (Map<String, Object> a : augs) {
                 sb.append("海克斯: ").append(a.get("name")).append(" (id=").append(a.get("id")).append(")\n");
             }
-            // 3. 装备
-            List<Map<String, Object>> items = jdbc.queryForList(
-                    "SELECT id, name FROM items WHERE name LIKE ? OR en_name LIKE ? LIMIT 5", like, like);
+            List<Map<String, Object>> items = heroMapper.searchNameItems(keyword);
             for (Map<String, Object> it : items) {
                 sb.append("装备: ").append(it.get("name")).append(" (id=").append(it.get("id")).append(")\n");
             }
@@ -126,6 +111,8 @@ public class DatabaseTools {
                 return "错误：table 必须是 heroes/augments/items/hero_augment_rank/hero_item_build 之一。";
             }
             int lim = limit <= 0 ? 10 : Math.min(limit, 300);
+            // heroId 为 0 视为未指定（0 不是有效英雄 id，避免 WHERE id=0 查空）
+            if (heroId != null && heroId == 0) heroId = null;
             List<Map<String, Object>> rows = heroMapper.dynamicQuery(
                     table, heroId, keyword, tier, order, lim);
             if (rows.isEmpty()) {
@@ -154,60 +141,44 @@ public class DatabaseTools {
         System.out.println("[工具] getSynergy " + heroName + " x " + itemOrAugmentNames);
         StringBuilder sb = new StringBuilder();
         try {
-            // 英雄档案
-            List<Map<String, Object>> heroes = jdbc.queryForList(
-                    "SELECT h.id, h.name FROM heroes h WHERE h.name LIKE ? OR h.official_name LIKE ? OR h.en_name LIKE ? LIMIT 3",
-                    "%" + heroName + "%", "%" + heroName + "%", "%" + heroName + "%");
-            if (heroes.isEmpty()) {
+            Map<String, Object> hero = heroMapper.findHero(heroName);
+            if (hero == null) {
                 return "未找到英雄: " + heroName;
             }
-            Object heroId = heroes.get(0).get("id");
-            String heroDbName = String.valueOf(heroes.get(0).get("name"));
+            Object heroId = hero.get("id");
+            String heroDbName = String.valueOf(hero.get("name"));
 
             sb.append("【英雄: ").append(heroDbName).append(" 技能档案】\n");
-            Map<String, Object> profile = jdbc.queryForMap(
-                    "SELECT title, tags, passive, spells, ally_tips FROM hero_profiles WHERE hero_id = ?", heroId);
-            sb.append("定位: ").append(profile.get("tags")).append("\n");
-            sb.append("被动: ").append(profile.get("passive")).append("\n");
-            sb.append("技能: ").append(profile.get("spells")).append("\n");
-            System.out.println("[工具] getSynergy 技能档案 len=" + String.valueOf(profile.get("spells")).length());
+            Map<String, Object> profile = heroMapper.getHeroProfile((Integer) heroId);
+            if (profile != null) {
+                sb.append("定位: ").append(profile.get("tags")).append("\n");
+                sb.append("被动: ").append(profile.get("passive")).append("\n");
+                sb.append("技能: ").append(profile.get("spells")).append("\n");
+                System.out.println("[工具] getSynergy 技能档案 len=" + String.valueOf(profile.get("spells")).length());
+            }
 
-            // 逐个解析名字（逗号分隔），并列列出每个的描述
             String[] names = itemOrAugmentNames.split("[,，]");
             boolean foundAny = false;
             for (String name : names) {
-                String keyword = name.trim();
-                if (keyword.isEmpty()) continue;
-                // 海克斯
-                List<Map<String, Object>> augs = jdbc.queryForList(
-                        "SELECT id, name, tier_name, description, tooltip FROM augments WHERE name LIKE ? LIMIT 2",
-                        "%" + keyword + "%");
+                String key = name.trim();
+                if (key.isEmpty()) continue;
+                List<Map<String, Object>> augs = heroMapper.getSynergyAugments(key);
                 for (Map<String, Object> a : augs) {
                     foundAny = true;
                     sb.append("\n【海克斯: ").append(a.get("name")).append("（").append(a.get("tier_name")).append("）】\n");
                     sb.append("效果: ").append(a.get("description")).append("\n");
                     if (a.get("tooltip") != null) sb.append("详细: ").append(a.get("tooltip")).append("\n");
-                    // 该海克斯在当前英雄下的胜率/排名（数据支撑联动分析）
-                    try {
-                        Object augmentId = a.get("id");
-                        if (augmentId != null) {
-                            List<Map<String, Object>> stats = jdbc.queryForList(
-                                    "SELECT win_rank, ROUND(win_rate * 100, 1) AS win_rate_pct, ROUND(pick_rate * 100, 1) AS pick_rate_pct " +
-                                            "FROM hero_augment_rank WHERE hero_id = ? AND augment_id = ? LIMIT 1",
-                                    heroId, ((Number) augmentId).intValue());
-                            if (!stats.isEmpty()) {
-                                Map<String, Object> st = stats.get(0);
-                                sb.append("该英雄数据: 排名 #").append(st.get("win_rank"))
-                                        .append(" 胜率 ").append(st.get("win_rate_pct")).append("%")
-                                        .append(" 登场率 ").append(st.get("pick_rate_pct")).append("%\n");
-                            }
+                    Object augmentId = a.get("id");
+                    if (augmentId != null) {
+                        Map<String, Object> st = heroMapper.getSynergyAugmentStats((Integer) heroId, ((Number) augmentId).intValue());
+                        if (st != null) {
+                            sb.append("该英雄数据: 排名 #").append(st.get("win_rank"))
+                                    .append(" 胜率 ").append(st.get("win_rate_pct")).append("%")
+                                    .append(" 登场率 ").append(st.get("pick_rate_pct")).append("%\n");
                         }
-                    } catch (Exception ignored) { }
+                    }
                 }
-                // 装备
-                List<Map<String, Object>> items = jdbc.queryForList(
-                        "SELECT name, plaintext, description, tags FROM items WHERE name LIKE ? LIMIT 2",
-                        "%" + keyword + "%");
+                List<Map<String, Object>> items = heroMapper.getSynergyItems(key);
                 for (Map<String, Object> it : items) {
                     foundAny = true;
                     sb.append("\n【装备: ").append(it.get("name")).append("】\n");
@@ -216,7 +187,7 @@ public class DatabaseTools {
                     if (it.get("description") != null) sb.append("详情: ").append(it.get("description")).append("\n");
                 }
                 if (augs.isEmpty() && items.isEmpty()) {
-                    sb.append("\n未找到: ").append(keyword).append("\n");
+                    sb.append("\n未找到: ").append(key).append("\n");
                 }
             }
 

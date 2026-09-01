@@ -94,21 +94,21 @@ mvn spring-boot:run
    ├─ GET /chat             SSE 流式回答
    └─ GET /api/game/hex/recognize  SSE 一键海克斯识别
         ▼
-ChatController ──> QueryRouter(硬触发白名单，非正则)
-   ├─ 命中 → 直接返回数据（0 次 LLM 调用）
-   └─ miss → IntentClassifier(LLM 结构化意图分类，enum 列表)
-              │ 多意图 / 跨轮记忆"已拥有海克斯"
-              │ ↓
-              GameContextInjector(代码前置取数: getGameState + 已拥有海克斯)
-              │ 注入前缀 → ConsultantService(AiService)
-              │ @SystemMessage 提示词（工具 + 意图分流 + 对局引导 + 反拆查）
-              │ ChatMemory(JsonFile 持久化, 一局一个文件)
-              ▼
-         qwen3.8-max（流式 + 工具调用, enable_thinking:false）
-              ▲
-              └─ Tools: getGameState / recognizeHex / saveHex /
-                        getSchema / searchName / queryDb / getSynergy /
-                        tryFixedQuery / queryKnowledge / updateKnowledge
+ChatController ──> QueryRouter(追问放行)
+   ├─ 追问("那/如果/再"开头) → 直接放行走 LLM
+   └─ 其余 → IntentClassifier(LLM 结构化意图分类，enum 列表)
+               │ 多意图 / 跨轮记忆"已拥有海克斯"
+               │ ↓
+               GameContextInjector(代码前置取数: getGameState + 已拥有海克斯)
+               │ 注入前缀 → ConsultantService(AiService)
+               │ @SystemMessage 提示词（工具 + 意图分流 + 对局引导 + 防幻觉/防硬编）
+               │ ChatMemory(JsonFile 持久化, 一局一个文件)
+               ▼
+          qwen3.8-max（流式 + 工具调用, enable_thinking:false）
+               ▲
+               └─ Tools: getGameState / recognizeHex / saveHex /
+                         getSchema / searchName / queryDb / getSynergy /
+                         tryFixedQuery / queryKnowledge / updateKnowledge
 ```
 
 ---
@@ -135,12 +135,13 @@ ChatController ──> QueryRouter(硬触发白名单，非正则)
 
 ### 回答路由
 
-1. **硬触发 `QueryRouter`**（代码层，白名单非正则）：死指令（"更新知识库/刷新数据"）精确匹配直接执行；"如果/那/再"开头追问直接放行走模型。命中短路 0 次 LLM。
+1. **追问放行 `QueryRouter`**（代码层）："如果/那/再"开头的追问承接上文，直接放行走模型；不做固定查询短路。
 2. **意图分类 `IntentClassifier`**（LLM 结构化，enum 列表）：把问题归为 HEX_PICK/BUILD/COUNTER/SYNERGY/FREE_QUERY/DESCRIPTIVE/UPDATE_DB/CHAT，可多意图；声明"已有 X"归 SYNERGY、追问承接上文主题，避免误判。
 3. **代码前置取数注入 `GameContextInjector`**：按意图由代码先取 `getGameState` + 会话内"已拥有海克斯"，拼成注入前缀喂给模型（无游戏也能注入已拥有前提）。模型只做推理与措辞，关键数据不靠模型自觉调工具。
 4. **LLM 工具链**（注入后的主回答）：
+   - 数据/固定查询（胜率/排行/出装/玩法/数据包）：提示词强制**先调 `tryFixedQuery`**，命中直接答；未命中才走 `queryDb` 参数化 / `getSynergy` 联动
+   - 描述类：按"需求/机制/效果"找对象（克回血、克护盾、X 最合适什么）→ **必须 `queryKnowledge`（RAG）**，因"需求→对象"关系不在库（`queryDb` 的 keyword 只匹配名字）
    - 选海克斯：`recognizeHex` 截图识别 → `getGameState` 看阵容/装备 → **`getSynergy` 逐条分析被动+Q/W/E/R 与候选海克斯联动** → 结合对面阵容/已有出装推荐
-   - 数据/描述类：固定查询 → `queryDb` 参数化查询 / `queryKnowledge` 语义检索（RAG 与动态 SQL 并行车道）；`queryDb` 的 keyword 只匹配名字，按效果/机制描述找装备/海克斯必须走 RAG
    - 更新类：`updateKnowledge` 触发全量同步 + 重建向量索引（更新期间 `/chat` 拦截所有回答）
 
 ### 防幻觉设计
@@ -205,7 +206,7 @@ src/main/java/com/example/demo/
 │   ├── GameContextInjector.java  # 代码前置取数 + "已拥有海克斯"注入
 │   ├── DatabaseTools.java      # getSchema/searchName/queryDb/getSynergy
 │   ├── FixedQueryTools.java    # tryFixedQuery 固定查询
-│   ├── QueryRouter.java        # 硬触发白名单 + 追问放行
+│   ├── QueryRouter.java        # 追问放行器
 │   ├── GameStateTool.java      # getGameState/saveHex
 │   ├── HexRecognizeTool.java   # recognizeHex
 │   ├── DynamicContentRetriever.java  # queryKnowledge（RAG）

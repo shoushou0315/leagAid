@@ -85,4 +85,23 @@ public interface HeroMapper {
 
     /** 全量装备（含图片，前端名称映射用） */
     List<Map<String, Object>> findAllItemsWithImage();
+
+    /** searchName：按名精确查英雄（称号/官方名/英文名） */
+    List<Map<String, Object>> searchNameHeroes(@Param("keyword") String keyword);
+
+    /** searchName：按名精确查海克斯 */
+    List<Map<String, Object>> searchNameAugments(@Param("keyword") String keyword);
+
+    /** searchName：按名精确查装备 */
+    List<Map<String, Object>> searchNameItems(@Param("keyword") String keyword);
+
+    /** getSynergy：按名精确查海克斯(效果/说明) */
+    List<Map<String, Object>> getSynergyAugments(@Param("keyword") String keyword);
+
+    /** getSynergy：该英雄该海克斯的排名/胜率 */
+    Map<String, Object> getSynergyAugmentStats(@Param("heroId") Integer heroId,
+                                               @Param("augmentId") Integer augmentId);
+
+    /** getSynergy：按名精确查装备(效果/说明) */
+    List<Map<String, Object>> getSynergyItems(@Param("keyword") String keyword);
 }

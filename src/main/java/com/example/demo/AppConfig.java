@@ -99,14 +99,13 @@ public class AppConfig {
     /** 显式绑定 AiService：注入工具（固定查询 + 自由查询 + 语义检索 + 游戏状态），流式，工具调用正常 */
     @Bean
     ConsultantService consultantService(StreamingChatModel streamingChatModel,
-                                        org.springframework.jdbc.core.JdbcTemplate jdbc,
                                         com.example.demo.mapper.HeroMapper heroMapper,
                                         DynamicContentRetriever ragRetriever,
                                         com.example.demo.ai.GameStateTool gameStateTool,
                                         com.example.demo.ai.HexRecognizeTool hexRecognizeTool,
                                         ChatMemoryProvider chatMemoryProvider) {
         // 直接用 new 实例（避免 Spring 代理导致 @Tool 注解丢失）
-        DatabaseTools databaseTools = new DatabaseTools(jdbc, heroMapper);
+        DatabaseTools databaseTools = new DatabaseTools(heroMapper);
         FixedQueryTools fixedQueryTools = new FixedQueryTools(heroMapper);
         return AiServices.builder(ConsultantService.class)
                 .streamingChatModel(streamingChatModel)
