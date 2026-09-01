@@ -30,7 +30,7 @@ public class FixedQueryTools {
         return query(question);
     }
 
-    /** 固定查询公共入口（@Tool 与硬路由 QueryRouter 共用同一份逻辑） */
+    /** 固定查询公共入口（@Tool 用，由模型自主调用） */
     public String query(String question) {
         // 1. 英雄排行榜
         if (question.matches(".*(英雄排行|胜率排行|TOP\\d+|最强英雄|哪些英雄强).*")) {

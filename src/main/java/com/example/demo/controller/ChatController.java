@@ -4,7 +4,6 @@ import com.example.demo.ai.DynamicContentRetriever;
 import com.example.demo.ai.GameContextInjector;
 import com.example.demo.ai.Intent;
 import com.example.demo.ai.IntentClassifier;
-import com.example.demo.ai.QueryRouter;
 import com.example.demo.service.ConsultantService;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
@@ -30,36 +29,29 @@ public class ChatController {
 
     private final ConsultantService consultantService;
     private final DynamicContentRetriever ragRetriever;
-    private final QueryRouter queryRouter;
     private final IntentClassifier intentClassifier;
     private final GameContextInjector contextInjector;
     private final Path memoryDir;
 
     public ChatController(ConsultantService consultantService,
                           DynamicContentRetriever ragRetriever,
-                          QueryRouter queryRouter,
                           IntentClassifier intentClassifier,
                           GameContextInjector contextInjector,
                           @Value("${app.memory-dir:data/chat-memories}") String memoryDir) {
         this.consultantService = consultantService;
         this.ragRetriever = ragRetriever;
-        this.queryRouter = queryRouter;
         this.intentClassifier = intentClassifier;
         this.contextInjector = contextInjector;
         this.memoryDir = Path.of(memoryDir);
         this.memoryDir.toFile().mkdirs();
     }
 
-    /** 对话（带 sessionId 才有跨轮记忆）。硬路由命中直接返回数据，miss 走 LLM（告知固定查询已试过，避免重复调 tryFixedQuery） */
+    /** 对话（带 sessionId 才有跨轮记忆）。意图分类 → 代码前置注入 → LLM 工具链（模型自主调工具取数） */
     @GetMapping("/chat")
     public Flux<String> chat(@RequestParam(defaultValue = "anonymous") String sessionId,
                              @RequestParam String message) {
         if (ragRetriever != null && !ragRetriever.isReady()) {
             return Flux.just("【知识库更新中】数据正在同步，暂时无法回答问题。请稍后重试，或刷新 /refresh 查看更新进度。");
-        }
-        String routed = queryRouter.route(message);
-        if (routed != null) {
-            return Flux.just(routed);
         }
         // 意图分类（纯文本返回，容错解析为枚举列表；失败降级 CHAT 兜底，绝不阻塞主回答）
         java.util.List<Intent> intents;
@@ -192,11 +184,5 @@ public class ChatController {
             return ragRetriever.isReady() ? "就绪" : "更新中";
         }
         return "未知";
-    }
-
-    /** 硬路由命中统计 */
-    @GetMapping("/route-stats")
-    public String routeStats() {
-        return queryRouter.stats();
     }
 }

@@ -94,21 +94,19 @@ mvn spring-boot:run
    ├─ GET /chat             SSE 流式回答
    └─ GET /api/game/hex/recognize  SSE 一键海克斯识别
         ▼
-ChatController ──> QueryRouter(追问放行)
-   ├─ 追问("那/如果/再"开头) → 直接放行走 LLM
-   └─ 其余 → IntentClassifier(LLM 结构化意图分类，enum 列表)
-               │ 多意图 / 跨轮记忆"已拥有海克斯"
-               │ ↓
-               GameContextInjector(代码前置取数: getGameState + 已拥有海克斯)
-               │ 注入前缀 → ConsultantService(AiService)
-               │ @SystemMessage 提示词（工具 + 意图分流 + 对局引导 + 防幻觉/防硬编）
-               │ ChatMemory(JsonFile 持久化, 一局一个文件)
-               ▼
-          qwen3.8-max（流式 + 工具调用, enable_thinking:false）
-               ▲
-               └─ Tools: getGameState / recognizeHex / saveHex /
-                         getSchema / searchName / queryDb / getSynergy /
-                         tryFixedQuery / queryKnowledge / updateKnowledge
+ChatController ──> IntentClassifier(LLM 结构化意图分类，enum 列表)
+   │ 多意图 / 跨轮记忆"已拥有海克斯"
+   ↓
+   GameContextInjector(代码前置取数: getGameState + 已拥有海克斯)
+   │ 注入前缀 → ConsultantService(AiService)
+   │ @SystemMessage 提示词（工具 + 意图分流 + 对局引导 + 防幻觉/防硬编）
+   │ ChatMemory(JsonFile 持久化, 一局一个文件)
+   ▼
+   qwen3.8-max（流式 + 工具调用, enable_thinking:false）
+        ▲
+        └─ Tools: getGameState / recognizeHex / saveHex /
+                  getSchema / searchName / queryDb / getSynergy /
+                  tryFixedQuery / queryKnowledge / updateKnowledge
 ```
 
 ---
@@ -135,10 +133,9 @@ ChatController ──> QueryRouter(追问放行)
 
 ### 回答路由
 
-1. **追问放行 `QueryRouter`**（代码层）："如果/那/再"开头的追问承接上文，直接放行走模型；不做固定查询短路。
-2. **意图分类 `IntentClassifier`**（LLM 结构化，enum 列表）：把问题归为 HEX_PICK/BUILD/COUNTER/SYNERGY/FREE_QUERY/DESCRIPTIVE/UPDATE_DB/CHAT，可多意图；声明"已有 X"归 SYNERGY、追问承接上文主题，避免误判。
-3. **代码前置取数注入 `GameContextInjector`**：按意图由代码先取 `getGameState` + 会话内"已拥有海克斯"，拼成注入前缀喂给模型（无游戏也能注入已拥有前提）。模型只做推理与措辞，关键数据不靠模型自觉调工具。
-4. **LLM 工具链**（注入后的主回答）：
+1. **意图分类 `IntentClassifier`**（LLM 结构化，enum 列表）：把问题归为 HEX_PICK/BUILD/COUNTER/SYNERGY/FREE_QUERY/DESCRIPTIVE/UPDATE_DB/CHAT，可多意图；声明"已有 X"归 SYNERGY、追问承接上文主题，避免误判。
+2. **代码前置取数注入 `GameContextInjector`**：按意图由代码先取 `getGameState` + 会话内"已拥有海克斯"，拼成注入前缀喂给模型（无游戏也能注入已拥有前提）。模型只做推理与措辞，关键数据不靠模型自觉调工具。
+3. **LLM 工具链**（注入后的主回答）：
    - 数据/固定查询（胜率/排行/出装/玩法/数据包）：提示词强制**先调 `tryFixedQuery`**，命中直接答；未命中才走 `queryDb` 参数化 / `getSynergy` 联动
    - 描述类：按"需求/机制/效果"找对象（克回血、克护盾、X 最合适什么）→ **必须 `queryKnowledge`（RAG）**，因"需求→对象"关系不在库（`queryDb` 的 keyword 只匹配名字）
    - 选海克斯：`recognizeHex` 截图识别 → `getGameState` 看阵容/装备 → **`getSynergy` 逐条分析被动+Q/W/E/R 与候选海克斯联动** → 结合对面阵容/已有出装推荐
@@ -206,7 +203,6 @@ src/main/java/com/example/demo/
 │   ├── GameContextInjector.java  # 代码前置取数 + "已拥有海克斯"注入
 │   ├── DatabaseTools.java      # getSchema/searchName/queryDb/getSynergy
 │   ├── FixedQueryTools.java    # tryFixedQuery 固定查询
-│   ├── QueryRouter.java        # 追问放行器
 │   ├── GameStateTool.java      # getGameState/saveHex
 │   ├── HexRecognizeTool.java   # recognizeHex
 │   ├── DynamicContentRetriever.java  # queryKnowledge（RAG）
@@ -230,7 +226,7 @@ src/main/java/com/example/demo/
 | `WS /voice-ws` | PCM 流式语音识别（中间+最终结果） |
 | `GET /sessions` / `GET /session/{id}` / `DELETE` | 会话历史查看/删除 |
 | `GET /refresh` | 数据同步 + 向量索引重建 |
-| `GET /status` / `GET /route-stats` | 服务/路由统计 |
+| `GET /status` | 服务就绪状态 |
 
 ---
 
