@@ -33,10 +33,10 @@ if not exist "%RUN%\BOOT-INF\classes\com\example\demo\DemoApplication.class" (
 )
 
 echo [4/4] Starting app...
-start "leagAid" "C:\Program Files\JetBrains\IntelliJ IDEA Community Edition 2025.2.5\jbr\bin\java.exe" -cp "%RUN%\BOOT-INF\classes;%RUN%\BOOT-INF\lib\*" com.example.demo.DemoApplication --spring.profiles.active=local
+start "leagAid" "C:\Program Files\JetBrains\IntelliJ IDEA Community Edition 2025.2.5\jbr\bin\java.exe" -Dfile.encoding=GBK -cp "%RUN%\BOOT-INF\classes;%RUN%\BOOT-INF\lib\*" com.example.demo.DemoApplication --spring.profiles.active=local
 
-echo Waiting for app (15s)...
-ping -n 15 127.0.0.1 >nul
+echo Waiting for app (10s)...
+ping -n 10 127.0.0.1 >nul
 start "" http://localhost:8080
 
 echo.

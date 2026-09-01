@@ -38,6 +38,9 @@ public interface HeroMapper {
     /** 英雄排行榜 TOP N */
     List<Map<String, Object>> getTopHeroes(@Param("limit") int limit);
 
+    /** 海克斯全局胜率排行（按 global_win_rate 降序） */
+    List<Map<String, Object>> getTopAugmentsByGlobalWinRate(@Param("limit") int limit);
+
     /** 全量海克斯（向量索引构建用） */
     List<Map<String, Object>> findAllAugments();
 

@@ -73,6 +73,15 @@
         LIMIT #{limit}
     </select>
 
+    <!-- 海克斯全局胜率排行 -->
+    <select id="getTopAugmentsByGlobalWinRate" resultType="map">
+        SELECT id, name, tier_name, rarity, global_win_rate
+        FROM augments
+        WHERE global_win_rate IS NOT NULL
+        ORDER BY global_win_rate DESC
+        LIMIT #{limit}
+    </select>
+
     <!-- 全量海克斯（向量索引构建） -->
     <select id="findAllAugments" resultType="map">
         SELECT id, name, tier_name, description
@@ -197,7 +206,7 @@
                 LIMIT #{limit}
             </when>
             <when test="table == 'augments'">
-                SELECT id, name, tier_name, rarity, description, tooltip, image_url
+                SELECT id, name, tier_name, rarity, description, tooltip, image_url, global_win_rate
                 FROM augments
                 <where>
                     <if test="keyword != null and keyword != ''">

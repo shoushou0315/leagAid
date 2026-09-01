@@ -156,7 +156,7 @@ public class QwenVisionService {
                 for (Object o : contentList) {
                     if (o instanceof Map<?, ?> m && m.get("text") != null) {
                         String text = String.valueOf(m.get("text"));
-                        for (String line : text.split("\\n")) {
+                        for (String line : text.lines().toList()) {
                             String clean = cleanName(line);
                             if (!clean.isEmpty() && names.size() < 3) names.add(clean);
                         }
@@ -173,11 +173,27 @@ public class QwenVisionService {
     private String cleanName(String line) {
         String s = line.trim();
         // 去开头序号：1. / 1、/ 1: / (1) / 一. 等
-        s = s.replaceFirst("^[\\d一二三四五六七八九十]+[.、:：)）]\\s*", "");
+        int k = 0;
+        while (k < s.length() && (Character.isDigit(s.charAt(k)) || "一二三四五六七八九十".indexOf(s.charAt(k)) >= 0)) k++;
+        if (k > 0 && k < s.length() && ".、:：)）".indexOf(s.charAt(k)) >= 0) {
+            k++;
+            while (k < s.length() && Character.isWhitespace(s.charAt(k))) k++;
+            s = s.substring(k);
+        }
         // 去结尾的句号/顿号/冒号
-        s = s.replaceAll("[。，、；：,.;:]\\s*$", "");
-        // 去常见废话前缀
-        s = s.replaceFirst("^(海克斯|强化|选项|第?[一二三1-3]?个?)[：:是]?\\s*", "");
+        int e = s.length();
+        while (e > 0 && "。，、；：,.;:".indexOf(s.charAt(e - 1)) >= 0) e--;
+        s = s.substring(0, e);
+        // 去常见废话前缀：海克斯/强化/选项 | 第X个 | ：/是 | 空白
+        for (String p : new String[]{"海克斯", "强化", "选项"}) {
+            if (s.startsWith(p)) { s = s.substring(p.length()).trim(); break; }
+        }
+        if (s.startsWith("第")) {
+            int j = 1;
+            while (j < s.length() && (Character.isDigit(s.charAt(j)) || "一二三".indexOf(s.charAt(j)) >= 0)) j++;
+            if (j < s.length() && s.charAt(j) == '个') s = s.substring(j + 1).trim();
+        }
+        while (!s.isEmpty() && (s.charAt(0) == '：' || s.charAt(0) == ':' || s.charAt(0) == '是')) s = s.substring(1).trim();
         return s.trim();
     }
 

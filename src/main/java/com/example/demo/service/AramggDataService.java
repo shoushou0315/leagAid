@@ -97,14 +97,44 @@ public class AramggDataService {
     }
 
     // ===== 1. 海克斯全量 =====
+    /**
+     * 爬 aramgg /zh-CN/augments 页面，拿海克斯的"全英雄平均胜率"（页面 SSG 渲染 208 个 article）。
+     * 每个 article：a[href*=/zh-CN/augments/{id}]、p 名称、span.stat-value 的百分比。
+     * 返回 id -> global_win_rate(0~100)。
+     */
+    private Map<Integer, Double> fetchAugmentGlobalWinRates() {
+        Map<Integer, Double> rates = new HashMap<>();
+        try {
+            org.jsoup.nodes.Document doc = org.jsoup.Jsoup.connect(baseUrl + "/zh-CN/augments")
+                    .userAgent("Mozilla/5.0").timeout(15000).get();
+            for (Element art : doc.select("article")) {
+                Element a = art.selectFirst("a[href*='/zh-CN/augments/']");
+                Element stat = art.selectFirst("span.stat-value");
+                if (a == null || stat == null) continue;
+                String href = a.attr("href");
+                int id = Integer.parseInt(href.substring(href.lastIndexOf('/') + 1));
+                String v = stat.text().replace("%", "").trim();
+                if (!v.isEmpty()) rates.put(id, Double.parseDouble(v));
+            }
+            log.info("[数据] 爬到海克斯全局胜率: {} 个", rates.size());
+        } catch (Exception e) {
+            log.warn("[数据] 拉取海克斯全局胜率失败: {}", e.getMessage());
+        }
+        return rates;
+    }
+
     private void syncAugments() throws Exception {
         JsonNode root = getJson(baseUrl + augmentsFile);
+        Map<Integer, Double> globalRates = fetchAugmentGlobalWinRates();
         List<Augment> list = new ArrayList<>();
         root.fields().forEachRemaining(e -> {
             JsonNode node = e.getValue();
             if (!node.path("enabled").asBoolean(true)) return;
+            int id = node.path("id").asInt();
+            // 清洗：只保留页面上的海克斯（208），其余丢弃
+            if (!globalRates.containsKey(id)) return;
             Augment a = new Augment();
-            a.setId(node.path("id").asInt());
+            a.setId(id);
             a.setName(node.path("displayName").asText(""));
             a.setEnName(node.path("name").asText(""));
             a.setRarity(node.path("rarity").asInt(0));
@@ -112,6 +142,7 @@ public class AramggDataService {
             a.setDescription(cleanHtml(node.path("description").asText("")));
             a.setTooltip(cleanHtml(node.path("tooltip").asText("")));
             a.setEnabled(true);
+            a.setGlobalWinRate(globalRates.get(id));
             // 海克斯图标：iconLarge 文件名转小写拼 CDN URL（_small 是黑白小图，_large 才是彩色）
             String icon = node.path("iconLarge").asText("");
             if (!icon.isEmpty()) {
@@ -121,7 +152,7 @@ public class AramggDataService {
         });
         dataWriteMapper.deleteAllAugments();
         dataWriteMapper.batchInsertAugments(list);
-        log.info("[数据] 海克斯落库: {} 个", list.size());
+        log.info("[数据] 海克斯落库（清洗到页面集合）: {} 个", list.size());
     }
 
     // ===== 2. 英雄总榜 =====
@@ -394,7 +425,7 @@ public class AramggDataService {
             org.jsoup.nodes.Element panel = panels.get(0);   // 只取第一个重复 section
             for (org.jsoup.nodes.Element badge : panel.select("span[data-slot=badge]")) {
                 String badgeText = badge.text().trim();
-                if (!badgeText.matches("#\\d+")) continue;   // 只认 #N 方案索引（核心装备有，推荐装没有）
+                if (!isHashNumber(badgeText)) continue;   // 只认 #N 方案索引（核心装备有，推荐装没有）
                 int buildIndex = Integer.parseInt(badgeText.substring(1));
 
                     // 方案块：从 badge 往上找「同时含 item-icons 和 胜率:」的最近祖先（该方案完整块）
@@ -514,9 +545,30 @@ public class AramggDataService {
         return mapper.readTree(resp.body());
     }
 
+    /** 是否为 #数字（如 "#3"）：非正则代替 matches("#\\d+") */
+    private static boolean isHashNumber(String s) {
+        if (s == null || s.length() < 2 || s.charAt(0) != '#') return false;
+        for (int i = 1; i < s.length(); i++) if (!Character.isDigit(s.charAt(i))) return false;
+        return true;
+    }
+
+    /** 去掉 HTML 标签：非正则代替 replaceAll("<[^>]+>","") */
+    private static String stripTags(String s) {
+        if (s == null) return "";
+        StringBuilder sb = new StringBuilder();
+        boolean inTag = false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '<') { inTag = true; continue; }
+            if (c == '>') { inTag = false; continue; }
+            if (!inTag) sb.append(c);
+        }
+        return sb.toString();
+    }
+
     private static String cleanHtml(String s) {
         if (s == null || s.isEmpty()) return "";
-        return s.replaceAll("<[^>]+>", "").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").trim();
+        return stripTags(s).replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").trim();
     }
 
     private static String rarityName(int rarity) {

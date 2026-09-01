@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS augments (
     description VARCHAR(4000),
     tooltip VARCHAR(4000),
     enabled BIT,
-    image_url VARCHAR(500)
+    image_url VARCHAR(500),
+    global_win_rate DOUBLE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS hero_augment_rank (

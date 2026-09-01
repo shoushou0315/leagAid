@@ -30,8 +30,10 @@ public class GameContextInjector {
             int idx = message.indexOf(tr);
             if (idx < 0) continue;
             String after = message.substring(idx + tr.length());
-            for (String part : after.split("[，,、；;和及\\s]+")) {
-                String name = part.replaceAll("[吗啊呢吧的了]+$", "").trim();
+            String norm = after.replace('，', ',').replace('、', ',').replace('；', ',').replace(';', ',')
+                    .replace('和', ',').replace('及', ',').replace(' ', ',').replace('\t', ',').replace('\n', ',');
+            for (String part : norm.split(",")) {
+                String name = stripTrailing(part, "吗啊呢吧的了").trim();
                 if (name.length() >= 2 && name.length() <= 8) {
                     hexHistoryService.add(sessionId, name);
                 }
@@ -50,7 +52,7 @@ public class GameContextInjector {
         }
         for (Intent it : intents) {
             switch (it) {
-                case HEX_PICK, BUILD, COUNTER, SYNERGY -> {
+                case HEX_PICK, BUILD, COUNTER, SYNERGY, FREE_QUERY -> {
                     String state = gameStateTool.getGameState(sessionId);
                     if (state != null && !state.isBlank()) injected.add(state);
                 }
@@ -60,5 +62,12 @@ public class GameContextInjector {
         if (injected.isEmpty()) return "";
         return "【以下数据为确定性依据，请直接基于它回答；对局数据无需重复调用 getGameState/recognizeHex 获取同一信息】\n"
                 + String.join("\n", injected);
+    }
+
+    /** 去掉末尾连续的任一给定字符（如：吗/啊/呢/吧/的/了） */
+    private static String stripTrailing(String s, String chars) {
+        int end = s.length();
+        while (end > 0 && chars.indexOf(s.charAt(end - 1)) >= 0) end--;
+        return s.substring(0, end);
     }
 }

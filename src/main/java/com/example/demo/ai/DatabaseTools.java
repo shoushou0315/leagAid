@@ -38,7 +38,8 @@ public class DatabaseTools {
 
                 【表2 augments】海克斯强化（236个）
                   id(INT PK), name(中文名), en_name(英文名), rarity(INT 0=白银1=黄金2=棱彩),
-                  tier_name(白银/黄金/棱彩), description(效果描述), tooltip(详细效果), enabled
+                  tier_name(白银/黄金/棱彩), description(效果描述), tooltip(详细效果), enabled,
+                  global_win_rate(该海克斯全英雄平均胜率, 0~100, 可查"海克斯全局胜率排行"——哪个海克斯整体最强)
 
                 【表3 hero_augment_rank】英雄×海克斯排名（核心，每英雄145条）
                   hero_id(FK→heroes.id), augment_id(FK→augments.id),
@@ -157,7 +158,7 @@ public class DatabaseTools {
                 System.out.println("[工具] getSynergy 技能档案 len=" + String.valueOf(profile.get("spells")).length());
             }
 
-            String[] names = itemOrAugmentNames.split("[,，]");
+            String[] names = itemOrAugmentNames.replace('，', ',').split(",");
             boolean foundAny = false;
             for (String name : names) {
                 String key = name.trim();

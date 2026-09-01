@@ -122,7 +122,7 @@ ChatController ──> IntentClassifier(LLM 结构化意图分类，enum 列表)
 | `searchName()` | 名称→id 映射（称号/官方中文名/英文名） |
 | `queryDb()` | 参数化动态查询（MyBatis 动态 SQL，5 表白名单，LLM 填参数不写 SQL） |
 | `getSynergy()` | 机制联动分析（英雄技能 × 海克斯/装备效果链式推理） |
-| `tryFixedQuery()` | 固定查询：英雄胜率/海克斯排名/出装/玩法/排行榜，按问题类型裁剪返回 |
+| `tryFixedQuery()` | 固定查询：英雄胜率/海克斯排名/出装/玩法/排行榜；**也可查海克斯全局胜率排行**（读不到当前英雄时的兜底） |
 | `queryKnowledge()` | 语义检索：按效果/机制描述找装备或海克斯（Redis 8 Vector Set）；**凡按语义描述找对象必须用它，防止模型凭记忆硬编** |
 | `updateKnowledge()` | 更新知识库：全量同步数据 + 重建向量索引（语音"更新知识库"触发） |
 

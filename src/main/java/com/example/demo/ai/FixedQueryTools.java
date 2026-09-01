@@ -32,10 +32,16 @@ public class FixedQueryTools {
 
     /** 固定查询公共入口（@Tool 用，由模型自主调用） */
     public String query(String question) {
-        // 1. 英雄排行榜
-        if (question.matches(".*(英雄排行|胜率排行|TOP\\d+|最强英雄|哪些英雄强).*")) {
+        // 英雄排行榜
+        if (containsAny(question, "英雄排行", "胜率排行", "最强英雄", "哪些英雄强", "TOP")) {
             List<Map<String, Object>> top = heroMapper.getTopHeroes(10);
             if (!top.isEmpty()) return formatTopHeroes(top);
+        }
+
+        // 海克斯全局胜率排行（无当前英雄时兜底）
+        if (containsAny(question, "海克斯排行", "海克斯胜率", "哪个海克斯强", "最强海克斯", "海克斯强度")) {
+            List<Map<String, Object>> top = heroMapper.getTopAugmentsByGlobalWinRate(10);
+            if (!top.isEmpty()) return formatTopAugments(top);
         }
 
         // 2. 组合查询：英雄 + 有了/拿到/刷到 某海克斯
@@ -55,10 +61,10 @@ public class FixedQueryTools {
         String heroDbName = String.valueOf(hero.get("name"));
 
         // 判断问题类型，按需返回（避免问出装却返回海克斯/技能等无关内容）
-        boolean askBuild = question.matches(".*(出装|出什么|出啥|怎么出|咋出|穿什么).*");
-        boolean askHex = question.matches(".*(海克斯|强化|选什么|选啥|符文).*");
-        boolean askPlay = question.matches(".*(怎么玩|咋玩|怎么打|咋打|玩法|技能|连招).*");
-        boolean askStat = question.matches(".*(胜率|Tier|强度|排行|排名|厉害吗|厉害不|强不强|咋样|怎么样).*");
+        boolean askBuild = containsAny(question, "出装", "出什么", "出啥", "怎么出", "咋出", "穿什么");
+        boolean askHex = containsAny(question, "海克斯", "强化", "选什么", "选啥", "符文");
+        boolean askPlay = containsAny(question, "怎么玩", "咋玩", "怎么打", "咋打", "玩法", "技能", "连招");
+        boolean askStat = containsAny(question, "胜率", "Tier", "强度", "排行", "排名", "厉害吗", "厉害不", "强不强", "咋样", "怎么样");
 
         // 4. 按问题类型返回对应数据包
         StringBuilder sb = new StringBuilder("【" + heroDbName + " 数据】\n");
@@ -112,7 +118,7 @@ public class FixedQueryTools {
             int idx = q.indexOf(m);
             if (idx <= 0) continue;
             String heroName = q.substring(0, idx).trim();
-            heroName = heroName.replaceAll("^(我|帮我|请问|我想|玩到|选了|问一下|想)", "").trim();
+            heroName = stripPrefix(heroName, new String[]{"我", "帮我", "请问", "我想", "玩到", "选了", "问一下", "想", "给我"});
             if (heroName.length() < 2 || heroName.length() > 6) continue;
 
             Map<String, Object> hero = heroMapper.findHero(heroName);
@@ -122,7 +128,8 @@ public class FixedQueryTools {
 
             // "有了X" 之后剩下的关键词（去掉 怎么玩/出什么/搭配 等尾巴）
             String keyword = q.substring(idx + m.length()).trim();
-            keyword = keyword.replaceAll("(怎么玩|怎么出装|怎么搭配|出什么装|出什么|怎么样|好不好|行不行|适合吗|配合什么|之后|接下去).*$", "").trim();
+            keyword = truncateBefore(keyword, new String[]{"怎么玩", "怎么出装", "怎么搭配", "出什么装", "出什么",
+                    "怎么样", "好不好", "行不行", "适合吗", "配合什么", "之后", "接下去"});
             if (keyword.length() < 2) continue;
 
             List<Map<String, Object>> hits = heroMapper.getHeroAugmentByName((Integer) heroId, keyword);
@@ -186,13 +193,19 @@ public class FixedQueryTools {
             if (idx > 0) {
                 String name = q.substring(0, idx).trim();
                 // 去掉可能的前缀（"我玩到""我选了""帮我看看"等）
-                name = name.replaceAll("^(我|帮我|请问|我想|玩到|选了|问一下|想|给我)", "").trim();
+                name = stripPrefix(name, new String[]{"我", "帮我", "请问", "我想", "玩到", "选了", "问一下", "想", "给我"});
                 if (name.length() >= 2 && name.length() <= 6) return name;
             }
         }
-        // 尝试"X 怎么玩"带空格
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^([\\u4e00-\\u9fa5]{2,6})\\s+(怎么|咋|啥|选|出|的|玩)").matcher(q);
-        if (m.find()) return m.group(1);
+        // "X 怎么玩"带空格：取第一个空格前的 2-6 字中文名，后接 怎么/咋/啥/选/出/的/玩
+        int sp = q.indexOf(' ');
+        if (sp > 0) {
+            String name = q.substring(0, sp).trim();
+            if (name.length() >= 2 && name.length() <= 6
+                    && containsAny(q.substring(sp + 1), "怎么", "咋", "啥", "选", "出", "的", "玩")) {
+                return name;
+            }
+        }
         return null;
     }
 
@@ -258,5 +271,35 @@ public class FixedQueryTools {
                     .append(" 胜率:").append(h.get("win_rate_pct")).append("%\n");
         }
         return sb.toString().trim();
+    }
+
+    private String formatTopAugments(List<Map<String, Object>> top) {
+        StringBuilder sb = new StringBuilder("【海克斯全局胜率排行 TOP】\n");
+        int i = 1;
+        for (Map<String, Object> a : top) {
+            sb.append(i++).append(". ").append(a.get("name"))
+                    .append("（").append(a.get("tier_name")).append("）")
+                    .append(" 全局胜率:").append(a.get("global_win_rate")).append("%\n");
+        }
+        return sb.toString().trim();
+    }
+
+    /** 是否包含任一关键词 */
+    private boolean containsAny(String s, String... keys) {
+        for (String k : keys) if (s.contains(k)) return true;
+        return false;
+    }
+
+    /** 去掉开头的任一前缀（一次，去第一个匹配） */
+    private String stripPrefix(String s, String[] prefixes) {
+        for (String p : prefixes) if (s.startsWith(p)) return s.substring(p.length()).trim();
+        return s.trim();
+    }
+
+    /** 从第一个出现的"尾巴"词截断（去掉其后内容） */
+    private String truncateBefore(String s, String[] tails) {
+        int min = Integer.MAX_VALUE;
+        for (String t : tails) { int i = s.indexOf(t); if (i >= 0 && i < min) min = i; }
+        return min == Integer.MAX_VALUE ? s.trim() : s.substring(0, min).trim();
     }
 }

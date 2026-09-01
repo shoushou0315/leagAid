@@ -74,9 +74,12 @@ public class ChatController {
     /** 容错解析意图分类结果：模型可能返回 "SYNERGY" / [HEX_PICK,BUILD] / 带引号逗号等，统一清洗；无效/空 → [CHAT] */
     private static java.util.List<Intent> parseIntents(String raw) {
         if (raw == null || raw.isBlank()) return java.util.List.of(Intent.CHAT);
+        String norm = raw.replace('"', ' ').replace('\'', ' ')
+                .replace('，', ',').replace('、', ',').replace(';', ',')
+                .replace('\n', ',').replace(' ', ',').replace('\t', ',');
         java.util.Set<Intent> out = new java.util.LinkedHashSet<>();
-        for (String token : raw.split("[,，;、\\n\\s]+")) {
-            String t = token.trim().replace("\"", "").replace("'", "").toUpperCase();
+        for (String token : norm.split(",")) {
+            String t = token.trim().toUpperCase();
             if (t.isEmpty()) continue;
             try { out.add(Intent.valueOf(t)); } catch (IllegalArgumentException ignored) { }
         }

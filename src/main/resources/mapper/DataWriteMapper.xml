@@ -33,10 +33,10 @@
 
     <insert id="batchInsertAugments">
         <if test="list != null and list.size() > 0">
-        INSERT INTO augments (id, name, en_name, rarity, tier_name, description, tooltip, enabled, image_url)
+        INSERT INTO augments (id, name, en_name, rarity, tier_name, description, tooltip, enabled, image_url, global_win_rate)
         VALUES
         <foreach collection="list" item="a" separator=",">
-            (#{a.id}, #{a.name}, #{a.enName}, #{a.rarity}, #{a.tierName}, #{a.description}, #{a.tooltip}, #{a.enabled}, #{a.imageUrl})
+            (#{a.id}, #{a.name}, #{a.enName}, #{a.rarity}, #{a.tierName}, #{a.description}, #{a.tooltip}, #{a.enabled}, #{a.imageUrl}, #{a.globalWinRate})
         </foreach>
         </if>
     </insert>

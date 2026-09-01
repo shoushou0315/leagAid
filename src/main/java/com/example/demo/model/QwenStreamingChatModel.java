@@ -79,9 +79,11 @@ public class QwenStreamingChatModel implements StreamingChatModel {
     private String sanitize(String args) {
         if (args == null || args.isBlank()) return "{}";
         String cleaned = args;
-        // 多轮清洗尾逗号（嵌套时可能需多次）
+        // 多轮去尾逗号（嵌套时可能需多次）：去掉 ",}" / ",]"（含逗号前空白）
         for (int i = 0; i < 5; i++) {
-            String next = cleaned.replaceAll(",\\s*([}\\]])", "$1");
+            String next = cleaned;
+            // 用逗号 + 空白 + 右括号 替换为先去掉逗号
+            next = replaceTrailingComma(next);
             if (next.equals(cleaned)) break;
             cleaned = next;
         }
@@ -91,6 +93,24 @@ public class QwenStreamingChatModel implements StreamingChatModel {
         // 兜底：仍非法则返回空对象，避免下游 JsonParseException
         System.out.println(">>> [ToolFix] 无法修复，降级为{}: [" + args + "]");
         return "{}";
+    }
+
+    /** 把 " ,}" / " ,]" （逗号紧邻右括号，可含空白）替换为 "}" / "]"；等价于正则 ,\s*([}\]]) -> $1 */
+    private String replaceTrailingComma(String s) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == ',') {
+                int j = i + 1;
+                while (j < s.length() && (s.charAt(j) == ' ' || s.charAt(j) == '\t' || s.charAt(j) == '\n')) j++;
+                if (j < s.length() && (s.charAt(j) == '}' || s.charAt(j) == ']')) {
+                    i = j - 1;
+                    continue;
+                }
+            }
+            sb.append(c);
+        }
+        return sb.toString();
     }
 
     private boolean isValidJson(String s) {

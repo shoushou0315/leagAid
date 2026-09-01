@@ -22,4 +22,6 @@ public class Augment {
     private Boolean enabled;
 
     private String imageUrl;      // 图标 URL（cdn.dtodo.cn，iconSmall 转小写）
+
+    private Double globalWinRate; // 海克斯全英雄平均胜率（来自 aramgg augments 页面，0~100）
 }
