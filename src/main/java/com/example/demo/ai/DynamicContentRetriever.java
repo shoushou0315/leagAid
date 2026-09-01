@@ -159,9 +159,11 @@ public class DynamicContentRetriever {
             if (matches.isEmpty()) {
                 return "未找到相关内容。**如实告诉用户知识库没有，禁止编造装备/海克斯的效果描述或胜率**。";
             }
-            StringBuilder sb = new StringBuilder("语义检索结果（" + matches.size() + " 条）：\n");
+            StringBuilder sb = new StringBuilder("语义检索结果（" + matches.size() + " 条，按相似度降序）：\n");
             for (Map<String, Object> m : matches) {
-                sb.append("- ").append(m.get("text")).append("\n");
+                Object score = m.get("score");
+                String sc = score == null ? "" : String.format("[%.3f] ", Double.parseDouble(String.valueOf(score)));
+                sb.append("- ").append(sc).append(m.get("text")).append("\n");
             }
             return sb.toString().trim();
         } catch (Exception e) {
